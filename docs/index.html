@@ -1,0 +1,1406 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TransferX Docs</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --bg2: #161b22;
+        --bg3: #1c2128;
+        --border: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #58a6ff;
+        --accent2: #79c0ff;
+        --green: #3fb950;
+        --red: #f85149;
+        --yellow: #d29922;
+        --purple: #d2a8ff;
+        --orange: #ffa657;
+        --sidebar: 260px;
+        --code-bg: #161b22;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-size: 15px;
+        line-height: 1.7;
+        display: flex;
+        min-height: 100vh;
+      }
+
+      /* ─── Sidebar ─── */
+      #sidebar {
+        width: var(--sidebar);
+        flex-shrink: 0;
+        background: var(--bg2);
+        border-right: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        overflow-y: auto;
+        padding: 24px 0;
+      }
+      #sidebar .logo {
+        padding: 0 20px 20px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 12px;
+      }
+      #sidebar .logo strong {
+        font-size: 17px;
+        color: var(--accent);
+        letter-spacing: -0.3px;
+      }
+      #sidebar .logo span {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      #sidebar nav a {
+        display: block;
+        padding: 6px 20px;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 13.5px;
+        border-left: 2px solid transparent;
+        transition:
+          color 0.15s,
+          border-color 0.15s,
+          background 0.15s;
+      }
+      #sidebar nav a:hover,
+      #sidebar nav a.active {
+        color: var(--text);
+        background: rgba(88, 166, 255, 0.07);
+        border-left-color: var(--accent);
+      }
+      #sidebar nav .section-label {
+        padding: 14px 20px 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+
+      /* ─── Main ─── */
+      #main {
+        flex: 1;
+        min-width: 0;
+        max-width: 900px;
+        padding: 48px 56px;
+      }
+      @media (max-width: 768px) {
+        #sidebar {
+          display: none;
+        }
+        #main {
+          padding: 24px 20px;
+        }
+      }
+
+      /* ─── Sections ─── */
+      .section {
+        margin-bottom: 72px;
+      }
+      h1 {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 12px;
+        letter-spacing: -0.5px;
+      }
+      h1 .badge {
+        font-size: 13px;
+        vertical-align: middle;
+        margin-left: 10px;
+        background: var(--accent);
+        color: #000;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-weight: 600;
+        letter-spacing: 0;
+      }
+      h2 {
+        font-size: 20px;
+        font-weight: 600;
+        margin: 40px 0 14px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+        color: var(--text);
+      }
+      h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 24px 0 10px;
+        color: var(--accent2);
+      }
+      p {
+        margin-bottom: 14px;
+        color: #ced5de;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 40px 0;
+      }
+
+      /* ─── Code ─── */
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 18px 20px;
+        overflow-x: auto;
+        margin: 16px 0;
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      code {
+        font-family:
+          "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+      }
+      :not(pre) > code {
+        background: var(--bg3);
+        border: 1px solid var(--border);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 13px;
+        color: var(--orange);
+      }
+
+      /* Syntax tokens */
+      .kw {
+        color: #ff7b72;
+      } /* keyword */
+      .ty {
+        color: #ffa657;
+      } /* type */
+      .fn {
+        color: #d2a8ff;
+      } /* function */
+      .str {
+        color: #a5d6ff;
+      } /* string */
+      .num {
+        color: #79c0ff;
+      } /* number */
+      .cm {
+        color: #8b949e;
+      } /* comment */
+      .pr {
+        color: #e6edf3;
+      } /* property */
+      .op {
+        color: #ff7b72;
+      } /* operator */
+      .pn {
+        color: #e6edf3;
+      } /* punctuation */
+
+      /* ─── Tables ─── */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+        font-size: 13.5px;
+      }
+      th {
+        text-align: left;
+        padding: 8px 12px;
+        background: var(--bg3);
+        border: 1px solid var(--border);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+      }
+      td {
+        padding: 9px 12px;
+        border: 1px solid var(--border);
+        vertical-align: top;
+        color: #ced5de;
+      }
+      tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      td code {
+        font-size: 12px;
+      }
+      .yes {
+        color: var(--green);
+        font-weight: 600;
+      }
+      .no {
+        color: var(--red);
+        font-weight: 600;
+      }
+      td strong {
+        color: var(--text);
+      }
+
+      /* ─── Callouts ─── */
+      .callout {
+        border-left: 3px solid;
+        padding: 12px 16px;
+        border-radius: 0 6px 6px 0;
+        margin: 16px 0;
+        font-size: 14px;
+      }
+      .callout.info {
+        border-color: var(--accent);
+        background: rgba(88, 166, 255, 0.08);
+      }
+      .callout.warn {
+        border-color: var(--yellow);
+        background: rgba(210, 153, 34, 0.08);
+      }
+      .callout.tip {
+        border-color: var(--green);
+        background: rgba(63, 185, 80, 0.08);
+      }
+      .callout strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .callout.info strong {
+        color: var(--accent);
+      }
+      .callout.warn strong {
+        color: var(--yellow);
+      }
+      .callout.tip strong {
+        color: var(--green);
+      }
+
+      /* ─── State diagram ─── */
+      .state-diagram {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 24px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .state {
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .state.init {
+        background: #1f3a5f;
+        color: #79c0ff;
+        border: 1px solid #58a6ff44;
+      }
+      .state.running {
+        background: #1a3a2e;
+        color: #56d364;
+        border: 1px solid #3fb95044;
+      }
+      .state.paused {
+        background: #3a2e1a;
+        color: #ffa657;
+        border: 1px solid #ffa65744;
+      }
+      .state.done {
+        background: #1a3a2e;
+        color: #3fb950;
+        border: 1px solid #3fb95088;
+      }
+      .state.failed {
+        background: #3a1a1a;
+        color: #f85149;
+        border: 1px solid #f8514944;
+      }
+      .state.cancel {
+        background: #2a2a2a;
+        color: #8b949e;
+        border: 1px solid #30363d;
+      }
+      .arrow {
+        color: var(--muted);
+        font-size: 16px;
+      }
+
+      /* ─── Packages grid ─── */
+      .pkg-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 14px;
+        margin: 16px 0;
+      }
+      .pkg-card {
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+      }
+      .pkg-card .name {
+        color: var(--accent);
+        font-weight: 600;
+        font-size: 13px;
+        font-family: "Cascadia Code", Consolas, monospace;
+      }
+      .pkg-card .desc {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 4px;
+      }
+
+      /* ─── Architecture ASCII ─── */
+      .arch {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 20px;
+        overflow-x: auto;
+        font-family: "Cascadia Code", Consolas, monospace;
+        font-size: 12.5px;
+        line-height: 1.5;
+        white-space: pre;
+        color: var(--muted);
+      }
+      .arch .hl {
+        color: var(--text);
+      }
+      .arch .ac {
+        color: var(--accent);
+      }
+
+      /* ─── Scroll spy ─── */
+      * {
+        scroll-margin-top: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ═══════════════════════════════════════════════ SIDEBAR ══ -->
+    <nav id="sidebar">
+      <div class="logo">
+        <strong>TransferX</strong>
+        <span>v0.1.0-alpha · Node.js SDK</span>
+      </div>
+      <nav>
+        <div class="section-label">Getting Started</div>
+        <a href="#overview">Overview</a>
+        <a href="#installation">Installation</a>
+        <a href="#quickstart">Quick Start</a>
+
+        <div class="section-label">Core Concepts</div>
+        <a href="#sessions">Sessions</a>
+        <a href="#chunks">Chunks & Concurrency</a>
+        <a href="#retry">Retry</a>
+        <a href="#progress">Progress</a>
+        <a href="#events">Events</a>
+        <a href="#stores">Session Stores</a>
+
+        <div class="section-label">API Reference</div>
+        <a href="#api-factory">createB2Engine()</a>
+        <a href="#api-session">makeUploadSession()</a>
+        <a href="#api-engine">UploadEngine</a>
+        <a href="#api-eventbus">EventBus</a>
+        <a href="#api-config">EngineConfig</a>
+        <a href="#api-errors">Errors</a>
+        <a href="#api-types">Types</a>
+
+        <div class="section-label">Guides</div>
+        <a href="#custom-adapter">Custom Adapter</a>
+        <a href="#crash-resume">Crash Resume</a>
+        <a href="#architecture">Architecture</a>
+      </nav>
+    </nav>
+
+    <!-- ═══════════════════════════════════════════════ MAIN ═════ -->
+    <main id="main">
+      <!-- ── Overview ── -->
+      <section class="section" id="overview">
+        <h1>TransferX <span class="badge">Alpha</span></h1>
+        <p>
+          Enterprise-grade chunked file transfer SDK for Node.js. Built around
+          three pillars: <strong>reliability</strong> (retry with exponential
+          backoff), <strong>resumability</strong> (crash-safe persistent
+          sessions), and <strong>observability</strong> (strongly-typed event
+          bus with live progress).
+        </p>
+
+        <div class="pkg-grid">
+          <div class="pkg-card">
+            <div class="name">@transferx/sdk</div>
+            <div class="desc">
+              Public entry point. <code>createB2Engine()</code> factory. Start
+              here.
+            </div>
+          </div>
+          <div class="pkg-card">
+            <div class="name">@transferx/core</div>
+            <div class="desc">
+              Engine, scheduler, retry, progress, stores, and all types.
+            </div>
+          </div>
+          <div class="pkg-card">
+            <div class="name">@transferx/adapter-b2</div>
+            <div class="desc">
+              Backblaze B2 native API adapter. Multipart uploads.
+            </div>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <strong>Note</strong>
+          Currently in alpha. The API is stable but not yet semver-pinned. Pin
+          to a commit SHA for production use.
+        </div>
+      </section>
+
+      <!-- ── Installation ── -->
+      <section class="section" id="installation">
+        <h2>Installation</h2>
+        <pre><code><span class="cm"># npm</span>
+npm install @transferx/sdk
+
+<span class="cm"># pnpm</span>
+pnpm add @transferx/sdk</code></pre>
+
+        <p>
+          Requires Node.js 18+ (uses native <code>fetch</code> and
+          <code>crypto.subtle</code>).
+        </p>
+      </section>
+
+      <!-- ── Quick Start ── -->
+      <section class="section" id="quickstart">
+        <h2>Quick Start</h2>
+        <pre><code><span class="kw">import</span> <span class="pn">*</span> <span class="kw">as</span> <span class="ty">fs</span> <span class="kw">from</span> <span class="str">'fs'</span><span class="pn">;</span>
+<span class="kw">import</span> <span class="pn">{</span>
+  <span class="fn">createB2Engine</span><span class="pn">,</span>
+  <span class="fn">makeUploadSession</span><span class="pn">,</span>
+  <span class="ty">FileSessionStore</span><span class="pn">,</span>
+<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+
+<span class="cm">// 1. Create the engine</span>
+<span class="kw">const</span> <span class="pn">{</span> <span class="pr">upload</span><span class="pn">,</span> <span class="pr">bus</span><span class="pn">,</span> <span class="pr">config</span><span class="pn">,</span> <span class="pr">store</span> <span class="pn">}</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span>
+  <span class="pr">b2</span><span class="pn">: {</span>
+    <span class="pr">applicationKeyId</span><span class="pn">:</span> <span class="ty">process</span><span class="pn">.</span><span class="pr">env</span><span class="pn">.</span><span class="pr">B2_APPLICATION_KEY_ID</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pr">applicationKey</span><span class="pn">:</span>   <span class="ty">process</span><span class="pn">.</span><span class="pr">env</span><span class="pn">.</span><span class="pr">B2_APP_KEY</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pr">bucketId</span><span class="pn">:</span>         <span class="ty">process</span><span class="pn">.</span><span class="pr">env</span><span class="pn">.</span><span class="pr">B2_BUCKET_ID</span><span class="op">!</span><span class="pn">,</span>
+  <span class="pn">},</span>
+  <span class="pr">store</span><span class="pn">:</span> <span class="kw">new</span> <span class="ty">FileSessionStore</span><span class="pn">(</span><span class="str">'./.transferx-sessions'</span><span class="pn">),</span>
+<span class="pn">});</span>
+
+<span class="cm">// 2. Listen for events</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">'progress'</span><span class="pn">,</span> <span class="pn">({</span> <span class="pr">progress</span> <span class="pn">})</span> <span class="op">=></span> <span class="pn">{</span>
+  <span class="ty">process</span><span class="pn">.</span><span class="pr">stdout</span><span class="pn">.</span><span class="fn">write</span><span class="pn">(</span>
+    <span class="str">`\r<span class="pn">${</span><span class="pr">progress</span><span class="pn">.</span><span class="pr">percent</span><span class="pn">.</span><span class="fn">toFixed</span><span class="pn">(</span><span class="num">1</span><span class="pn">)</span><span class="pn">}</span>%  <span class="pn">${</span><span class="pn">(</span><span class="pr">progress</span><span class="pn">.</span><span class="pr">speedBytesPerSec</span> <span class="op">/</span> <span class="num">1e6</span><span class="pn">).</span><span class="fn">toFixed</span><span class="pn">(</span><span class="num">2</span><span class="pn">)</span><span class="pn">}</span> MB/s`</span>
+  <span class="pn">);</span>
+<span class="pn">});</span>
+
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">'session:done'</span><span class="pn">,</span> <span class="pn">({</span> <span class="pr">session</span> <span class="pn">})</span> <span class="op">=></span>
+  <span class="ty">console</span><span class="pn">.</span><span class="fn">log</span><span class="pn">(</span><span class="str">'\n✓ Done'</span><span class="pn">,</span> <span class="pr">session</span><span class="pn">.</span><span class="pr">id</span><span class="pn">)</span>
+<span class="pn">);</span>
+
+<span class="cm">// 3. Build session and upload</span>
+<span class="kw">const</span> <span class="pr">stat</span> <span class="op">=</span> <span class="pr">fs</span><span class="pn">.</span><span class="fn">statSync</span><span class="pn">(</span><span class="str">'/path/to/video.mp4'</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pr">session</span> <span class="op">=</span> <span class="fn">makeUploadSession</span><span class="pn">(</span>
+  <span class="str">'upload-001'</span><span class="pn">,</span>
+  <span class="pn">{</span> <span class="pr">name</span><span class="pn">:</span> <span class="str">'video.mp4'</span><span class="pn">,</span> <span class="pr">size</span><span class="pn">:</span> <span class="pr">stat</span><span class="pn">.</span><span class="pr">size</span><span class="pn">,</span> <span class="pr">mimeType</span><span class="pn">:</span> <span class="str">'video/mp4'</span><span class="pn">,</span> <span class="pr">path</span><span class="pn">:</span> <span class="str">'/path/to/video.mp4'</span> <span class="pn">},</span>
+  <span class="str">'uploads/video.mp4'</span><span class="pn">,</span>
+  <span class="pr">config</span><span class="pn">,</span>
+<span class="pn">);</span>
+
+<span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pr">result</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
+<span class="cm">// result.state === 'done'</span></code></pre>
+      </section>
+
+      <!-- ── Sessions ── -->
+      <section class="section" id="sessions">
+        <h2>Sessions</h2>
+        <p>
+          A <strong>TransferSession</strong> is the unit of work in TransferX.
+          It holds the file descriptor, all chunk metadata, current transfer
+          state, and the configuration that governs the upload. Sessions are
+          created once with <code>makeUploadSession()</code>, then passed to
+          <code>engine.upload()</code>.
+        </p>
+
+        <h3>Session state machine</h3>
+        <div class="state-diagram">
+          <span class="state init">created</span>
+          <span class="arrow">→</span>
+          <span class="state init">initializing</span>
+          <span class="arrow">→</span>
+          <span class="state init">queued</span>
+          <span class="arrow">→</span>
+          <span class="state running">running</span>
+          <span class="arrow">→</span>
+          <span class="state done">done ✓</span>
+          &nbsp;&nbsp;
+          <span class="state running">running</span>
+          <span class="arrow">⇌</span>
+          <span class="state paused">paused</span>
+          &nbsp;&nbsp;
+          <span class="state running">running</span>
+          <span class="arrow">→</span>
+          <span class="state failed">failed</span>
+          <span class="arrow">→</span>
+          <span class="state init">queued</span>
+          &nbsp;&nbsp;
+          <span class="state running">running</span>
+          <span class="arrow">→</span>
+          <span class="state cancel">cancelled</span>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>State</th>
+              <th>Terminal?</th>
+              <th>Resumable?</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>created</code></td>
+              <td></td>
+              <td></td>
+              <td>Session constructed, not yet started</td>
+            </tr>
+            <tr>
+              <td><code>initializing</code></td>
+              <td></td>
+              <td></td>
+              <td>Calling <code>initTransfer()</code> on the adapter</td>
+            </tr>
+            <tr>
+              <td><code>queued</code></td>
+              <td></td>
+              <td></td>
+              <td>Waiting in the scheduler queue</td>
+            </tr>
+            <tr>
+              <td><code>running</code></td>
+              <td></td>
+              <td></td>
+              <td>Chunks uploading in parallel</td>
+            </tr>
+            <tr>
+              <td><code>paused</code></td>
+              <td></td>
+              <td class="yes">✓</td>
+              <td>Scheduler drained, upload suspended</td>
+            </tr>
+            <tr>
+              <td><code>failed</code></td>
+              <td class="yes">✓</td>
+              <td class="yes">✓</td>
+              <td>A chunk exhausted its retry budget; resumable</td>
+            </tr>
+            <tr>
+              <td><code>done</code></td>
+              <td class="yes">✓</td>
+              <td></td>
+              <td>
+                All chunks confirmed, <code>completeTransfer()</code> called
+              </td>
+            </tr>
+            <tr>
+              <td><code>cancelled</code></td>
+              <td class="yes">✓</td>
+              <td></td>
+              <td>
+                User-initiated cancellation; <code>abortTransfer()</code> called
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout tip">
+          <strong>Resuming</strong>
+          Sessions in <code>paused</code> or <code>failed</code> state can be
+          passed back to <code>engine.upload()</code>. The engine will skip
+          chunks that are already in <code>done</code> state and only upload the
+          remaining ones.
+        </div>
+      </section>
+
+      <!-- ── Chunks ── -->
+      <section class="section" id="chunks">
+        <h2>Chunks &amp; Concurrency</h2>
+        <p>
+          Files are split into fixed-size chunks (default 10 MiB). Each chunk is
+          uploaded independently. The <strong>Scheduler</strong> controls how
+          many active chunk uploads run at once.
+        </p>
+
+        <h3>Chunk states</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>State</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>pending</code></td>
+              <td>Not yet started</td>
+            </tr>
+            <tr>
+              <td><code>uploading</code></td>
+              <td>In-flight HTTP upload</td>
+            </tr>
+            <tr>
+              <td><code>done</code></td>
+              <td>Confirmed by provider</td>
+            </tr>
+            <tr>
+              <td><code>failed</code></td>
+              <td>Attempt failed; may retry</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Concurrency config</h3>
+        <pre><code><span class="kw">const</span> <span class="pr">engine</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span>
+  <span class="pr">b2</span><span class="pn">: { ... },</span>
+  <span class="pr">config</span><span class="pn">: {</span>
+    <span class="pr">concurrency</span><span class="pn">: {</span>
+      <span class="pr">initial</span><span class="pn">:</span> <span class="num">4</span><span class="pn">,</span>   <span class="cm">// start with 4 parallel uploads</span>
+      <span class="pr">min</span><span class="pn">:</span>     <span class="num">1</span><span class="pn">,</span>   <span class="cm">// never below 1</span>
+      <span class="pr">max</span><span class="pn">:</span>     <span class="num">16</span><span class="pn">,</span>  <span class="cm">// never above 16</span>
+      <span class="pr">adaptive</span><span class="pn">:</span> <span class="kw">false</span><span class="pn">,</span> <span class="cm">// disable auto-tuning</span>
+    <span class="pn">},</span>
+  <span class="pn">},</span>
+<span class="pn">});</span></code></pre>
+      </section>
+
+      <!-- ── Retry ── -->
+      <section class="section" id="retry">
+        <h2>Retry</h2>
+        <p>
+          Each chunk has its own retry budget. Failed chunks are re-queued with
+          exponential backoff + full jitter to avoid thundering herd.
+          Non-retryable error categories (<code>clientError</code>,
+          <code>auth</code>, <code>cancelled</code>, <code>fatal</code>)
+          propagate immediately.
+        </p>
+
+        <h3>Backoff formula</h3>
+        <p>Delay before attempt <em>n</em> (1-indexed):</p>
+        <pre><code>base_delay = min(baseDelayMs × 2^(n-1), maxDelayMs)
+actual_delay = base_delay + random(0, jitterMs)</code></pre>
+
+        <h3>Rate-limit awareness</h3>
+        <p>
+          When the provider responds with HTTP 429, the engine reads the
+          <code>Retry-After</code> header and waits at least that duration
+          before re-queuing the chunk.
+        </p>
+
+        <pre><code><span class="pr">config</span><span class="pn">: {</span>
+  <span class="pr">retry</span><span class="pn">: {</span>
+    <span class="pr">maxAttempts</span><span class="pn">:</span> <span class="num">5</span><span class="pn">,</span>      <span class="cm">// 1 initial + 4 retries</span>
+    <span class="pr">baseDelayMs</span><span class="pn">:</span> <span class="num">500</span><span class="pn">,</span>
+    <span class="pr">maxDelayMs</span><span class="pn">:</span>  <span class="num">30_000</span><span class="pn">,</span> <span class="cm">// cap at 30s</span>
+    <span class="pr">jitterMs</span><span class="pn">:</span>    <span class="num">500</span><span class="pn">,</span>
+  <span class="pn">},</span>
+<span class="pn">}</span></code></pre>
+      </section>
+
+      <!-- ── Progress ── -->
+      <section class="section" id="progress">
+        <h2>Progress</h2>
+        <p>
+          The <strong>ProgressEngine</strong> computes an EMA-smoothed speed
+          estimate and the resulting ETA. Progress events fire at most every
+          <code>progressIntervalMs</code> milliseconds (default 200 ms).
+        </p>
+
+        <pre><code><span class="pr">bus</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">'progress'</span><span class="pn">,</span> <span class="pn">({</span> <span class="pr">progress</span> <span class="pn">})</span> <span class="op">=></span> <span class="pn">{</span>
+  <span class="ty">console</span><span class="pn">.</span><span class="fn">log</span><span class="pn">({</span>
+    <span class="pr">percent</span><span class="pn">:</span>          <span class="pr">progress</span><span class="pn">.</span><span class="pr">percent</span><span class="pn">,</span>          <span class="cm">// 0–100</span>
+    <span class="pr">transferred</span><span class="pn">:</span>      <span class="pr">progress</span><span class="pn">.</span><span class="pr">transferredBytes</span><span class="pn">,</span>  <span class="cm">// bytes</span>
+    <span class="pr">total</span><span class="pn">:</span>            <span class="pr">progress</span><span class="pn">.</span><span class="pr">totalBytes</span><span class="pn">,</span>
+    <span class="pr">speedMBps</span><span class="pn">:</span>        <span class="pn">(</span><span class="pr">progress</span><span class="pn">.</span><span class="pr">speedBytesPerSec</span> <span class="op">/</span> <span class="num">1e6</span><span class="pn">).</span><span class="fn">toFixed</span><span class="pn">(</span><span class="num">2</span><span class="pn">),</span>
+    <span class="pr">etaSeconds</span><span class="pn">:</span>       <span class="pr">progress</span><span class="pn">.</span><span class="pr">etaSeconds</span><span class="pn">,</span>        <span class="cm">// undefined when speed === 0</span>
+  <span class="pn">});</span>
+<span class="pn">});</span></code></pre>
+      </section>
+
+      <!-- ── Events ── -->
+      <section class="section" id="events">
+        <h2>Events</h2>
+        <p>
+          All events are dispatched synchronously via the
+          <strong>EventBus</strong>. Handlers are called in registration order.
+          Use <code>bus.on()</code> / <code>bus.off()</code>.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Event type</th>
+              <th>Payload fields</th>
+              <th>When fired</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>session:created</code></td>
+              <td><code>session</code></td>
+              <td>After session is initialised in the engine</td>
+            </tr>
+            <tr>
+              <td><code>session:started</code></td>
+              <td><code>session</code></td>
+              <td>All chunks queued, uploading begins</td>
+            </tr>
+            <tr>
+              <td><code>session:paused</code></td>
+              <td><code>session</code></td>
+              <td><code>engine.pause()</code> called</td>
+            </tr>
+            <tr>
+              <td><code>session:resumed</code></td>
+              <td><code>session</code></td>
+              <td><code>engine.resume()</code> called</td>
+            </tr>
+            <tr>
+              <td><code>session:done</code></td>
+              <td><code>session</code></td>
+              <td>All chunks confirmed, transfer complete</td>
+            </tr>
+            <tr>
+              <td><code>session:failed</code></td>
+              <td><code>session, error</code></td>
+              <td>Unrecoverable failure (chunk exhausted budget)</td>
+            </tr>
+            <tr>
+              <td><code>session:cancelled</code></td>
+              <td><code>session</code></td>
+              <td>User called cancel before completion</td>
+            </tr>
+            <tr>
+              <td><code>chunk:started</code></td>
+              <td><code>session, chunk</code></td>
+              <td>Chunk upload begins</td>
+            </tr>
+            <tr>
+              <td><code>chunk:done</code></td>
+              <td><code>session, chunk</code></td>
+              <td>Chunk confirmed by provider</td>
+            </tr>
+            <tr>
+              <td><code>chunk:failed</code></td>
+              <td><code>session, chunk, error, willRetry</code></td>
+              <td>Chunk attempt failed</td>
+            </tr>
+            <tr>
+              <td><code>chunk:fatal</code></td>
+              <td><code>session, chunk, error</code></td>
+              <td>Chunk exhausted retry budget</td>
+            </tr>
+            <tr>
+              <td><code>progress</code></td>
+              <td><code>progress</code></td>
+              <td>Throttled live progress snapshot</td>
+            </tr>
+            <tr>
+              <td><code>log</code></td>
+              <td><code>level, message, data?</code></td>
+              <td>Internal diagnostic messages</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Unsubscribing</h3>
+        <pre><code><span class="kw">const</span> <span class="pr">handler</span> <span class="op">=</span> <span class="pn">({</span> <span class="pr">progress</span> <span class="pn">})</span> <span class="op">=></span> <span class="ty">console</span><span class="pn">.</span><span class="fn">log</span><span class="pn">(</span><span class="pr">progress</span><span class="pn">.</span><span class="pr">percent</span><span class="pn">);</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">'progress'</span><span class="pn">,</span> <span class="pr">handler</span><span class="pn">);</span>
+<span class="cm">// ...later...</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">off</span><span class="pn">(</span><span class="str">'progress'</span><span class="pn">,</span> <span class="pr">handler</span><span class="pn">);</span></code></pre>
+      </section>
+
+      <!-- ── Stores ── -->
+      <section class="section" id="stores">
+        <h2>Session Stores</h2>
+        <p>
+          A session store (<code>ISessionStore</code>) persists sessions so they
+          survive process restarts. Two implementations are included.
+        </p>
+
+        <h3>
+          MemorySessionStore
+          <small style="color: var(--muted); font-weight: 400">(default)</small>
+        </h3>
+        <p>
+          In-process only. Sessions are lost if the process exits. Good for
+          testing and short-lived jobs.
+        </p>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="ty">MemorySessionStore</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+<span class="kw">const</span> <span class="pr">store</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">MemorySessionStore</span><span class="pn">();</span></code></pre>
+
+        <h3>FileSessionStore</h3>
+        <p>
+          Writes each session as a JSON file in a directory. Writes are atomic:
+          data is first written to a <code>.tmp</code> file, then renamed — so a
+          crash mid-write cannot corrupt an existing session.
+        </p>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="ty">FileSessionStore</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+<span class="kw">const</span> <span class="pr">store</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">FileSessionStore</span><span class="pn">(</span><span class="str">'./.transferx-sessions'</span><span class="pn">);</span>
+
+<span class="cm">// On restart — resume incomplete sessions</span>
+<span class="kw">const</span> <span class="pr">sessions</span> <span class="op">=</span> <span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">listAll</span><span class="pn">();</span>
+<span class="kw">for</span> <span class="pn">(</span><span class="kw">const</span> <span class="pr">s</span> <span class="kw">of</span> <span class="pr">sessions</span><span class="pn">)</span> <span class="pn">{</span>
+  <span class="kw">if</span> <span class="pn">(</span><span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'failed'</span> <span class="op">||</span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'paused'</span><span class="pn">)</span> <span class="pn">{</span>
+    <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">s</span><span class="pn">);</span>
+  <span class="pn">}</span>
+<span class="pn">}</span></code></pre>
+
+        <h3>ISessionStore interface</h3>
+        <pre><code><span class="kw">interface</span> <span class="ty">ISessionStore</span> <span class="pn">{</span>
+  <span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">:</span> <span class="ty">TransferSession</span><span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="kw">void</span><span class="pn">&gt;;</span>
+  <span class="fn">load</span><span class="pn">(</span><span class="pr">id</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span>               <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">TransferSession</span> <span class="op">|</span> <span class="kw">undefined</span><span class="pn">&gt;;</span>
+  <span class="fn">delete</span><span class="pn">(</span><span class="pr">id</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span>             <span class="ty">Promise</span><span class="pn">&lt;</span><span class="kw">void</span><span class="pn">&gt;;</span>
+  <span class="fn">listAll</span><span class="pn">():</span>                       <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">TransferSession</span><span class="pn">[]&gt;;</span>
+<span class="pn">}</span></code></pre>
+      </section>
+
+      <hr />
+
+      <!-- ── API: createB2Engine ── -->
+      <section class="section" id="api-factory">
+        <h2>createB2Engine(opts)</h2>
+        <p>
+          High-level factory. Wires together B2Adapter, UploadEngine, EventBus,
+          and a session store.
+        </p>
+
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createB2Engine</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">engine</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span>
+  <span class="pr">b2</span><span class="pn">: {</span>
+    <span class="pr">applicationKeyId</span><span class="pn">:</span> <span class="str">'...'</span><span class="pn">,</span>  <span class="cm">// B2 keyID</span>
+    <span class="pr">applicationKey</span><span class="pn">:</span>   <span class="str">'...'</span><span class="pn">,</span>  <span class="cm">// B2 secret</span>
+    <span class="pr">bucketId</span><span class="pn">:</span>         <span class="str">'...'</span><span class="pn">,</span>  <span class="cm">// target bucket</span>
+  <span class="pn">},</span>
+  <span class="pr">config</span><span class="pn">?:</span>  <span class="ty">Partial</span><span class="pn">&lt;</span><span class="ty">EngineConfig</span><span class="pn">&gt;,</span>
+  <span class="pr">store</span><span class="pn">?:</span>   <span class="ty">ISessionStore</span><span class="pn">,</span>     <span class="cm">// defaults to MemorySessionStore</span>
+<span class="pn">});</span>
+
+<span class="cm">// Returns:</span>
+<span class="pn">{</span>
+  <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">:</span> <span class="ty">TransferSession</span><span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">TransferSession</span><span class="pn">&gt;;</span>
+  <span class="pr">bus</span><span class="pn">:</span>    <span class="ty">EventBus</span><span class="pn">;</span>
+  <span class="pr">config</span><span class="pn">:</span> <span class="ty">EngineConfig</span><span class="pn">;</span>
+  <span class="pr">store</span><span class="pn">:</span>  <span class="ty">ISessionStore</span><span class="pn">;</span>
+<span class="pn">}</span></code></pre>
+      </section>
+
+      <!-- ── API: makeUploadSession ── -->
+      <section class="section" id="api-session">
+        <h2>makeUploadSession()</h2>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">makeUploadSession</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">session</span> <span class="op">=</span> <span class="fn">makeUploadSession</span><span class="pn">(</span>
+  <span class="pr">id</span><span class="pn">:</span>        <span class="ty">string</span><span class="pn">,</span>           <span class="cm">// unique, stable identifier</span>
+  <span class="pr">file</span><span class="pn">:</span>      <span class="ty">FileDescriptor</span><span class="pn">,</span>   <span class="cm">// { name, size, mimeType, path? }</span>
+  <span class="pr">targetKey</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">,</span>           <span class="cm">// object key in the bucket</span>
+  <span class="pr">config</span><span class="pn">:</span>    <span class="ty">EngineConfig</span><span class="pn">,</span>     <span class="cm">// from engine.config</span>
+<span class="pn">);</span></code></pre>
+
+        <h3>FileDescriptor</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Required</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>name</code></td>
+              <td><code>string</code></td>
+              <td class="yes">✓</td>
+              <td>Filename, used in upload headers</td>
+            </tr>
+            <tr>
+              <td><code>size</code></td>
+              <td><code>number</code></td>
+              <td class="yes">✓</td>
+              <td>Total byte size</td>
+            </tr>
+            <tr>
+              <td><code>mimeType</code></td>
+              <td><code>string</code></td>
+              <td class="yes">✓</td>
+              <td>Content-Type for upload</td>
+            </tr>
+            <tr>
+              <td><code>path</code></td>
+              <td><code>string</code></td>
+              <td></td>
+              <td>
+                Absolute local path (optional; required for Node.js reader)
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── API: UploadEngine ── -->
+      <section class="section" id="api-engine">
+        <h2>UploadEngine</h2>
+        <p>
+          Low-level orchestrator. Use <code>createB2Engine()</code> unless you
+          need a custom adapter.
+        </p>
+
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="ty">UploadEngine</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">engine</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">UploadEngine</span><span class="pn">({</span>
+  <span class="pr">adapter</span><span class="pn">:</span>       <span class="pr">myAdapter</span><span class="pn">,</span>
+  <span class="pr">store</span><span class="pn">:</span>         <span class="pr">myStore</span><span class="pn">,</span>
+  <span class="pr">bus</span><span class="pn">:</span>           <span class="pr">myBus</span><span class="pn">,</span>
+  <span class="pr">config</span><span class="op">?:</span>       <span class="ty">Partial</span><span class="pn">&lt;</span><span class="ty">EngineConfig</span><span class="pn">&gt;,</span>
+  <span class="pr">readerFactory</span><span class="op">?:</span> <span class="pn">(</span><span class="pr">file</span><span class="pn">:</span> <span class="ty">FileDescriptor</span><span class="pn">)</span> <span class="op">=></span> <span class="ty">IChunkReader</span><span class="pn">,</span>
+<span class="pn">});</span>
+
+<span class="cm">// Methods</span>
+<span class="kw">await</span> <span class="pr">engine</span><span class="pn">.</span><span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>  <span class="cm">// returns final TransferSession</span>
+<span class="pr">engine</span><span class="pn">.</span><span class="fn">pause</span><span class="pn">();</span>
+<span class="pr">engine</span><span class="pn">.</span><span class="fn">resume</span><span class="pn">();</span></code></pre>
+      </section>
+
+      <!-- ── API: EventBus ── -->
+      <section class="section" id="api-eventbus">
+        <h2>EventBus</h2>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="ty">EventBus</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">bus</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">EventBus</span><span class="pn">();</span>
+
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">'session:done'</span><span class="pn">,</span>  <span class="pr">handler</span><span class="pn">);</span>   <span class="cm">// subscribe</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">off</span><span class="pn">(</span><span class="str">'session:done'</span><span class="pn">,</span> <span class="pr">handler</span><span class="pn">);</span>   <span class="cm">// unsubscribe</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">emit</span><span class="pn">(</span><span class="pr">event</span><span class="pn">);</span>                    <span class="cm">// dispatch (used internally)</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">clear</span><span class="pn">(</span><span class="str">'progress'</span><span class="pn">);</span>            <span class="cm">// remove all handlers for one type</span>
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">clearAll</span><span class="pn">();</span>                    <span class="cm">// remove all handlers</span></code></pre>
+
+        <div class="callout info">
+          <strong>Dispatch is synchronous</strong>
+          Handlers run synchronously in the event loop tick they are emitted in.
+          If a handler throws, the error is caught and a <code>log</code> event
+          is emitted instead — other handlers still run.
+        </div>
+      </section>
+
+      <!-- ── API: EngineConfig ── -->
+      <section class="section" id="api-config">
+        <h2>EngineConfig</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Default</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>chunkSize</code></td>
+              <td><code>number</code></td>
+              <td><code>10485760</code></td>
+              <td>10 MiB. Bytes per chunk.</td>
+            </tr>
+            <tr>
+              <td><code>checksumVerify</code></td>
+              <td><code>boolean</code></td>
+              <td><code>true</code></td>
+              <td>SHA-256 per chunk before upload</td>
+            </tr>
+            <tr>
+              <td><code>progressIntervalMs</code></td>
+              <td><code>number</code></td>
+              <td><code>200</code></td>
+              <td>Max frequency of progress events</td>
+            </tr>
+            <tr>
+              <td><code>retry.maxAttempts</code></td>
+              <td><code>number</code></td>
+              <td><code>5</code></td>
+              <td>Total attempts per chunk (incl. first)</td>
+            </tr>
+            <tr>
+              <td><code>retry.baseDelayMs</code></td>
+              <td><code>number</code></td>
+              <td><code>500</code></td>
+              <td>Base exponential backoff delay</td>
+            </tr>
+            <tr>
+              <td><code>retry.maxDelayMs</code></td>
+              <td><code>number</code></td>
+              <td><code>30000</code></td>
+              <td>Backoff ceiling</td>
+            </tr>
+            <tr>
+              <td><code>retry.jitterMs</code></td>
+              <td><code>number</code></td>
+              <td><code>500</code></td>
+              <td>Max random jitter per delay</td>
+            </tr>
+            <tr>
+              <td><code>concurrency.initial</code></td>
+              <td><code>number</code></td>
+              <td><code>4</code></td>
+              <td>Starting parallel chunk count</td>
+            </tr>
+            <tr>
+              <td><code>concurrency.min</code></td>
+              <td><code>number</code></td>
+              <td><code>1</code></td>
+              <td>Adaptive lower bound</td>
+            </tr>
+            <tr>
+              <td><code>concurrency.max</code></td>
+              <td><code>number</code></td>
+              <td><code>16</code></td>
+              <td>Adaptive upper bound</td>
+            </tr>
+            <tr>
+              <td><code>concurrency.adaptive</code></td>
+              <td><code>boolean</code></td>
+              <td><code>true</code></td>
+              <td>Enable adaptive concurrency tuning</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── API: Errors ── -->
+      <section class="section" id="api-errors">
+        <h2>Errors</h2>
+        <p>
+          All transfer errors are instances of <code>TransferError</code>. The
+          <code>category</code> field controls retry behaviour.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Retryable</th>
+              <th>Typical cause</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>network</code></td>
+              <td class="yes">✓</td>
+              <td>Connection reset, DNS failure, timeout</td>
+            </tr>
+            <tr>
+              <td><code>rateLimit</code></td>
+              <td class="yes">✓</td>
+              <td>HTTP 429 — respects <code>Retry-After</code></td>
+            </tr>
+            <tr>
+              <td><code>serverError</code></td>
+              <td class="yes">✓</td>
+              <td>HTTP 500–599</td>
+            </tr>
+            <tr>
+              <td><code>checksum</code></td>
+              <td class="yes">✓</td>
+              <td>Local SHA-256 mismatch before upload</td>
+            </tr>
+            <tr>
+              <td><code>unknown</code></td>
+              <td class="yes">✓</td>
+              <td>Conservative; retried by default</td>
+            </tr>
+            <tr>
+              <td><code>clientError</code></td>
+              <td class="no">✗</td>
+              <td>HTTP 400–499 (except 429) — our bug</td>
+            </tr>
+            <tr>
+              <td><code>auth</code></td>
+              <td class="no">✗</td>
+              <td>HTTP 401/403 — needs credential refresh</td>
+            </tr>
+            <tr>
+              <td><code>cancelled</code></td>
+              <td class="no">✗</td>
+              <td>User-initiated cancellation</td>
+            </tr>
+            <tr>
+              <td><code>fatal</code></td>
+              <td class="no">✗</td>
+              <td>Unrecoverable internal state</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="ty">TransferError</span><span class="pn">,</span> <span class="ty">ErrorCategory</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+
+<span class="pr">bus</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">'session:failed'</span><span class="pn">,</span> <span class="pn">({</span> <span class="pr">session</span><span class="pn">,</span> <span class="pr">error</span> <span class="pn">})</span> <span class="op">=></span> <span class="pn">{</span>
+  <span class="kw">if</span> <span class="pn">(</span><span class="pr">error</span><span class="pn">.</span><span class="pr">category</span> <span class="op">===</span> <span class="str">'auth'</span><span class="pn">)</span> <span class="pn">{</span>
+    <span class="cm">// Refresh credentials and recreate the engine</span>
+  <span class="pn">}</span>
+<span class="pn">});</span></code></pre>
+      </section>
+
+      <!-- ── API: Types ── -->
+      <section class="section" id="api-types">
+        <h2>Types</h2>
+        <pre><code><span class="kw">import</span> <span class="kw">type</span> <span class="pn">{</span>
+  <span class="cm">// Session</span>
+  <span class="ty">TransferSession</span><span class="pn">,</span>
+  <span class="ty">SessionState</span><span class="pn">,</span>
+  <span class="ty">FileDescriptor</span><span class="pn">,</span>
+
+  <span class="cm">// Chunks</span>
+  <span class="ty">ChunkMeta</span><span class="pn">,</span>
+  <span class="ty">ChunkState</span><span class="pn">,</span>
+
+  <span class="cm">// Config</span>
+  <span class="ty">EngineConfig</span><span class="pn">,</span>
+  <span class="ty">RetryPolicy</span><span class="pn">,</span>
+  <span class="ty">ConcurrencyPolicy</span><span class="pn">,</span>
+
+  <span class="cm">// Events</span>
+  <span class="ty">TransferEvent</span><span class="pn">,</span>
+  <span class="ty">TransferProgress</span><span class="pn">,</span>
+  <span class="ty">IEventBus</span><span class="pn">,</span>
+
+  <span class="cm">// Errors</span>
+  <span class="ty">TransferError</span><span class="pn">,</span>
+  <span class="ty">ErrorCategory</span><span class="pn">,</span>
+
+  <span class="cm">// Stores</span>
+  <span class="ty">ISessionStore</span><span class="pn">,</span>
+
+  <span class="cm">// Adapter</span>
+  <span class="ty">ITransferAdapter</span><span class="pn">,</span>
+  <span class="ty">ChunkUploadResult</span><span class="pn">,</span>
+<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span></code></pre>
+      </section>
+
+      <hr />
+
+      <!-- ── Custom Adapter ── -->
+      <section class="section" id="custom-adapter">
+        <h2>Custom Adapter</h2>
+        <p>
+          Implement <code>ITransferAdapter</code> to use any S3-compatible or
+          proprietary storage backend.
+        </p>
+
+        <pre><code><span class="kw">import</span> <span class="kw">type</span> <span class="pn">{</span>
+  <span class="ty">ITransferAdapter</span><span class="pn">,</span> <span class="ty">TransferSession</span><span class="pn">,</span>
+  <span class="ty">ChunkMeta</span><span class="pn">,</span> <span class="ty">ChunkUploadResult</span><span class="pn">,</span>
+<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+
+<span class="kw">export class</span> <span class="ty">S3Adapter</span> <span class="kw">implements</span> <span class="ty">ITransferAdapter</span> <span class="pn">{</span>
+
+  <span class="cm">/** Called once before any chunk. Return a stable upload ID. */</span>
+  <span class="kw">async</span> <span class="fn">initTransfer</span><span class="pn">(</span><span class="pr">session</span><span class="pn">:</span> <span class="ty">TransferSession</span><span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">string</span><span class="pn">&gt;</span> <span class="pn">{</span>
+    <span class="kw">const</span> <span class="pn">{</span> <span class="pr">uploadId</span> <span class="pn">}</span> <span class="op">=</span> <span class="kw">await</span> <span class="pr">this</span><span class="pn">.</span><span class="pr">s3</span><span class="pn">.</span><span class="fn">createMultipartUpload</span><span class="pn">({</span>
+      <span class="pr">Bucket</span><span class="pn">:</span> <span class="pr">this</span><span class="pn">.</span><span class="pr">bucket</span><span class="pn">,</span>
+      <span class="pr">Key</span><span class="pn">:</span>    <span class="pr">session</span><span class="pn">.</span><span class="pr">targetKey</span><span class="pn">,</span>
+    <span class="pn">});</span>
+    <span class="kw">return</span> <span class="pr">uploadId</span><span class="op">!</span><span class="pn">;</span>
+  <span class="pn">}</span>
+
+  <span class="cm">/** Called for each chunk. Return a providerToken (etag / part ID). */</span>
+  <span class="kw">async</span> <span class="fn">uploadChunk</span><span class="pn">(</span>
+    <span class="pr">session</span><span class="pn">:</span>   <span class="ty">TransferSession</span><span class="pn">,</span>
+    <span class="pr">chunk</span><span class="pn">:</span>     <span class="ty">ChunkMeta</span><span class="pn">,</span>
+    <span class="pr">data</span><span class="pn">:</span>      <span class="ty">Uint8Array</span><span class="pn">,</span>
+    <span class="pr">sha256Hex</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">,</span>
+  <span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">ChunkUploadResult</span><span class="pn">&gt;</span> <span class="pn">{</span>
+    <span class="kw">const</span> <span class="pr">res</span> <span class="op">=</span> <span class="kw">await</span> <span class="pr">this</span><span class="pn">.</span><span class="pr">s3</span><span class="pn">.</span><span class="fn">uploadPart</span><span class="pn">({</span>
+      <span class="pr">Bucket</span><span class="pn">:</span>     <span class="pr">this</span><span class="pn">.</span><span class="pr">bucket</span><span class="pn">,</span>
+      <span class="pr">Key</span><span class="pn">:</span>        <span class="pr">session</span><span class="pn">.</span><span class="pr">targetKey</span><span class="pn">,</span>
+      <span class="pr">UploadId</span><span class="pn">:</span>   <span class="pr">session</span><span class="pn">.</span><span class="pr">providerSessionId</span><span class="op">!</span><span class="pn">,</span>
+      <span class="pr">PartNumber</span><span class="pn">:</span> <span class="pr">chunk</span><span class="pn">.</span><span class="pr">index</span> <span class="op">+</span> <span class="num">1</span><span class="pn">,</span>  <span class="cm">// S3 is 1-indexed</span>
+      <span class="pr">Body</span><span class="pn">:</span>       <span class="pr">data</span><span class="pn">,</span>
+    <span class="pn">});</span>
+    <span class="kw">return</span> <span class="pn">{</span> <span class="pr">providerToken</span><span class="pn">:</span> <span class="pr">res</span><span class="pn">.</span><span class="ty">ETag</span><span class="op">!</span> <span class="pn">};</span>
+  <span class="pn">}</span>
+
+  <span class="cm">/** Called after all chunks succeed. Finalise the multipart upload. */</span>
+  <span class="kw">async</span> <span class="fn">completeTransfer</span><span class="pn">(</span>
+    <span class="pr">session</span><span class="pn">:</span> <span class="ty">TransferSession</span><span class="pn">,</span>
+    <span class="pr">chunks</span><span class="pn">:</span>  <span class="ty">ChunkMeta</span><span class="pn">[],</span>
+  <span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="kw">void</span><span class="pn">&gt;</span> <span class="pn">{</span>
+    <span class="kw">await</span> <span class="pr">this</span><span class="pn">.</span><span class="pr">s3</span><span class="pn">.</span><span class="fn">completeMultipartUpload</span><span class="pn">({</span>
+      <span class="pr">Bucket</span><span class="pn">:</span>          <span class="pr">this</span><span class="pn">.</span><span class="pr">bucket</span><span class="pn">,</span>
+      <span class="pr">Key</span><span class="pn">:</span>             <span class="pr">session</span><span class="pn">.</span><span class="pr">targetKey</span><span class="pn">,</span>
+      <span class="pr">UploadId</span><span class="pn">:</span>        <span class="pr">session</span><span class="pn">.</span><span class="pr">providerSessionId</span><span class="op">!</span><span class="pn">,</span>
+      <span class="pr">MultipartUpload</span><span class="pn">:</span> <span class="pn">{</span>
+        <span class="pr">Parts</span><span class="pn">:</span> <span class="pr">chunks</span><span class="pn">.</span><span class="fn">map</span><span class="pn">(</span><span class="pr">c</span> <span class="op">=></span> <span class="pn">({</span>
+          <span class="pr">PartNumber</span><span class="pn">:</span> <span class="pr">c</span><span class="pn">.</span><span class="pr">index</span> <span class="op">+</span> <span class="num">1</span><span class="pn">,</span>
+          <span class="ty">ETag</span><span class="pn">:</span>       <span class="pr">c</span><span class="pn">.</span><span class="pr">providerToken</span><span class="op">!</span><span class="pn">,</span>
+        <span class="pn">})),</span>
+      <span class="pn">},</span>
+    <span class="pn">});</span>
+  <span class="pn">}</span>
+
+  <span class="cm">/** Best-effort cleanup — must never throw. */</span>
+  <span class="kw">async</span> <span class="fn">abortTransfer</span><span class="pn">(</span><span class="pr">session</span><span class="pn">:</span> <span class="ty">TransferSession</span><span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="kw">void</span><span class="pn">&gt;</span> <span class="pn">{</span>
+    <span class="kw">await</span> <span class="pr">this</span><span class="pn">.</span><span class="pr">s3</span><span class="pn">.</span><span class="fn">abortMultipartUpload</span><span class="pn">({</span>
+      <span class="pr">Bucket</span><span class="pn">:</span>   <span class="pr">this</span><span class="pn">.</span><span class="pr">bucket</span><span class="pn">,</span>
+      <span class="pr">Key</span><span class="pn">:</span>      <span class="pr">session</span><span class="pn">.</span><span class="pr">targetKey</span><span class="pn">,</span>
+      <span class="pr">UploadId</span><span class="pn">:</span> <span class="pr">session</span><span class="pn">.</span><span class="pr">providerSessionId</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pn">}).</span><span class="fn">catch</span><span class="pn">(()</span> <span class="op">=></span> <span class="pn">{});</span>
+  <span class="pn">}</span>
+<span class="pn">}</span></code></pre>
+      </section>
+
+      <!-- ── Crash Resume ── -->
+      <section class="section" id="crash-resume">
+        <h2>Crash Resume</h2>
+        <p>
+          Use <code>FileSessionStore</code> and save the session before starting
+          the upload. On restart, load all sessions and re-upload those in
+          resumable states.
+        </p>
+        <pre><code><span class="cm">// ─── startup.ts ───────────────────────────────────────────</span>
+<span class="kw">import</span> <span class="pn">{</span> <span class="fn">createB2Engine</span><span class="pn">,</span> <span class="ty">FileSessionStore</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">store</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">FileSessionStore</span><span class="pn">(</span><span class="str">'./.transferx-sessions'</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pn">{</span> <span class="pr">upload</span> <span class="pn">}</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span> <span class="pr">b2</span><span class="pn">: {</span> <span class="cm">/* ... */</span> <span class="pn">},</span> <span class="pr">store</span> <span class="pn">});</span>
+
+<span class="cm">// Resume any incomplete sessions from a previous run</span>
+<span class="kw">const</span> <span class="pr">sessions</span> <span class="op">=</span> <span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">listAll</span><span class="pn">();</span>
+<span class="kw">await</span> <span class="ty">Promise</span><span class="pn">.</span><span class="fn">allSettled</span><span class="pn">(</span>
+  <span class="pr">sessions</span>
+    <span class="pn">.</span><span class="fn">filter</span><span class="pn">(</span><span class="pr">s</span> <span class="op">=></span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'paused'</span> <span class="op">||</span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'failed'</span><span class="pn">)</span>
+    <span class="pn">.</span><span class="fn">map</span><span class="pn">(</span><span class="pr">s</span> <span class="op">=></span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">s</span><span class="pn">))</span>
+<span class="pn">);</span></code></pre>
+
+        <div class="callout tip">
+          <strong>Chunk-level resume</strong>
+          Chunks that are already in <code>done</code> state are skipped
+          automatically — only pending and failed chunks are re-uploaded.
+        </div>
+      </section>
+
+      <!-- ── Architecture ── -->
+      <section class="section" id="architecture">
+        <h2>Architecture</h2>
+        <div class="arch">
+          <span class="hl"
+            >┌─────────────────────────────────────────────────────────┐</span
+          >
+          <span class="hl">│ @transferx/sdk │</span>
+          │ <span class="ac">createB2Engine()</span> ·
+          <span class="ac">makeUploadSession()</span> │
+          <span class="hl"
+            >└───────────────────────┬─────────────────────────────────┘</span
+          >
+          │
+          <span class="hl"
+            >┌───────────────────────▼─────────────────────────────────┐</span
+          >
+          <span class="hl">│ UploadEngine │</span>
+          │ │ │ ┌─────────────┐ ┌──────────────┐ ┌───────────────┐ │ │ │
+          <span class="ac">Scheduler</span> │ │
+          <span class="ac">RetryEngine</span> │ │<span class="ac"
+            >ProgressEngine</span
+          >│ │ │ │ (concurr.) │ │ (backoff, │ │ (EMA speed, │ │ │ │ │ │
+          rate-limit) │ │ ETA, %) │ │ │ └─────────────┘ └──────────────┘
+          └───────────────┘ │ │ │ │ ┌─────────────┐ ┌──────────────┐
+          ┌───────────────┐ │ │ │ <span class="ac">Chunker</span> │ │
+          <span class="ac">EventBus</span> │ │
+          <span class="ac">ISessionStore</span>│ │ │ │ (split file │ │ (typed, │
+          │ (Memory / │ │ │ │ into parts)│ │ synchronous)│ │ File) │ │ │
+          └─────────────┘ └──────────────┘ └───────────────┘ │
+          <span class="hl"
+            >└───────────────────────┬─────────────────────────────────┘</span
+          >
+          │ ITransferAdapter
+          <span class="hl"
+            >┌───────────────────────▼─────────────────────────────────┐</span
+          >
+          │ Storage Provider Adapters │ │ │ │ <span class="ac">B2Adapter</span>
+          <span class="ac">S3Adapter</span> (planned) │ │ (native B2 API)
+          (aws-sdk v3 wrapper) │
+          <span class="hl"
+            >└─────────────────────────────────────────────────────────┘</span
+          >
+        </div>
+
+        <h3>Data flow for a single chunk</h3>
+        <pre><code>UploadEngine.upload()
+  └─ Chunker.split(file) → ChunkMeta[]
+  └─ adapter.initTransfer(session) → providerSessionId
+  └─ Scheduler.push(chunkTask) × N
+       └─ Chunker.read(chunk) → Uint8Array
+       └─ sha256(data) → hex
+       └─ adapter.uploadChunk(session, chunk, data, sha256)
+            → ChunkUploadResult { providerToken }
+       └─ [on failure] RetryEngine.shouldRetry() → delay
+            └─ Scheduler.pushFront(chunkTask)  ← high-priority
+  └─ completeTransfer() when all chunks done</code></pre>
+      </section>
+
+      <p
+        style="
+          color: var(--muted);
+          font-size: 13px;
+          margin-top: 48px;
+          padding-top: 24px;
+          border-top: 1px solid var(--border);
+        "
+      >
+        TransferX · MIT License · 152 tests passing
+      </p>
+    </main>
+
+    <script>
+      // ─── Scroll spy ───────────────────────────────────────
+      const links = document.querySelectorAll("#sidebar nav a");
+      const sections = [...links]
+        .map((a) => document.querySelector(a.getAttribute("href")))
+        .filter(Boolean);
+
+      const obs = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              links.forEach((l) => l.classList.remove("active"));
+              const active = document.querySelector(
+                `#sidebar a[href="#${e.target.id}"]`,
+              );
+              if (active) active.classList.add("active");
+            }
+          });
+        },
+        { rootMargin: "0px 0px -60% 0px", threshold: 0 },
+      );
+
+      sections.forEach((s) => obs.observe(s));
+    </script>
+  </body>
+</html>
