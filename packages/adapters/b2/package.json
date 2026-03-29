@@ -1,6 +1,6 @@
 {
   "name": "@transferx/adapter-b2",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "TransferX adapter for Backblaze B2 large file uploads",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,6 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@transferx/core": "0.1.2"
+    "@transferx/core": "0.1.3"
   }
 }

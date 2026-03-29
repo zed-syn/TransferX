@@ -1,5 +1,7 @@
 npm version patch
 
+npm login
+
 cd packages/sdk
 npm version patch
 npm run build
