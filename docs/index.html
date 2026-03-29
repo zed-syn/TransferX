@@ -775,6 +775,13 @@
         <a href="#custom-adapter">Custom Adapter</a>
         <a href="#crash-resume">Crash Resume</a>
         <a href="#architecture">Architecture</a>
+
+        <div class="section-label">Downloads</div>
+        <a href="#download-overview">Overview</a>
+        <a href="#download-quickstart">Quick Start</a>
+        <a href="#download-resume">Crash Resume</a>
+        <a href="#download-config">Configuration</a>
+        <a href="#download-api">API Reference</a>
       </nav>
     </nav>
 
@@ -1994,6 +2001,389 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
         </div>
       </section>
 
+      <!-- ── Downloads ── -->
+      <section class="section" id="download-overview">
+        <h2>Downloads — Overview</h2>
+        <p>
+          <code>@transferx/downloader</code> is an IDM-class parallel HTTP
+          download engine. It splits large files into equal-size chunks and
+          fetches them concurrently using HTTP <code>Range</code> requests, then
+          stitches them back into a single output file using pwrite-based
+          streaming writes.
+        </p>
+        <table class="prop-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Parallel connections</td>
+              <td>
+                Up to 8 simultaneous <code>Range</code> requests (configurable)
+              </td>
+            </tr>
+            <tr>
+              <td>Crash resume</td>
+              <td>
+                JSON session persisted to disk; resumes from the last complete
+                chunk boundary
+              </td>
+            </tr>
+            <tr>
+              <td>Retry</td>
+              <td>
+                Per-chunk exponential back-off with full jitter; 4xx errors
+                throw immediately
+              </td>
+            </tr>
+            <tr>
+              <td>Progress</td>
+              <td>
+                EMA-smoothed <code>bytesPerSec</code>, <code>percent</code>,
+                <code>eta</code>, throttled to 250 ms
+              </td>
+            </tr>
+            <tr>
+              <td>Adaptive concurrency</td>
+              <td>
+                Sliding-window error-rate controller auto-adjusts connection
+                ceiling
+              </td>
+            </tr>
+            <tr>
+              <td>Server fallback</td>
+              <td>
+                Falls back to single-stream if server does not support
+                <code>Range</code>
+              </td>
+            </tr>
+            <tr>
+              <td>Stale detection</td>
+              <td>
+                Validates ETag → Last-Modified → Content-Length before resuming
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── Downloads – Quick Start ── -->
+      <section class="section" id="download-quickstart">
+        <h2>Downloads — Quick Start</h2>
+        <pre><code>import { createDownloader } from "@transferx/sdk";
+
+const task = createDownloader({
+  url: "https://example.com/large-file.zip",
+  outputPath: "/tmp/large-file.zip",
+});
+
+task.on("progress", (p) => {
+  const pct  = p.percent?.toFixed(1) ?? "?";
+  const mbps = (p.speedBytesPerSec / 1024 / 1024).toFixed(1);
+  console.log(`${pct}%  ${mbps} MB/s`);
+});
+
+await task.start();
+console.log("Done!");</code></pre>
+
+        <h3>Pause · Resume · Cancel</h3>
+        <pre><code>const task = createDownloader({ url, outputPath });
+const done  = task.start();  // returns Promise&lt;DownloadSession&gt;
+
+task.pause();   // queues drain — in-flight chunks finish naturally
+task.resume();  // re-activates scheduling
+
+await task.cancel(); // persists "cancelled" session; resumable later</code></pre>
+      </section>
+
+      <!-- ── Downloads – Crash Resume ── -->
+      <section class="section" id="download-resume">
+        <h2>Downloads — Crash Resume</h2>
+        <p>
+          Session data is stored as JSON at
+          <code>&lt;storeDir&gt;/&lt;sessionId&gt;.json</code> where:
+        </p>
+        <ul class="bullet-list">
+          <li>
+            <code>storeDir</code> defaults to <code>~/.transferx/sessions</code>
+          </li>
+          <li>
+            <code>sessionId</code> is derived as
+            <code>sha256(url + "\0" + outputPath).slice(0, 16)</code> (hex)
+          </li>
+        </ul>
+        <p style="margin-top: 12px">
+          On next launch with the same <code>url</code> /
+          <code>outputPath</code>:
+        </p>
+        <ol class="bullet-list">
+          <li>
+            Session file is loaded and staleness is checked against the server
+            (ETag → Last-Modified → Content-Length).
+          </li>
+          <li>
+            If the server resource has changed, a
+            <code>staleSession</code> error is thrown.
+          </li>
+          <li>
+            Otherwise, only chunks with status <code>pending</code> or
+            <code>failed</code> are re-downloaded.
+          </li>
+        </ol>
+        <div class="callout callout-amber" style="margin-top: 16px">
+          <strong>Limitation:</strong> Resume granularity is per-chunk. If a
+          chunk was partially written before a crash, the entire chunk is
+          re-downloaded from its start offset. Sub-chunk resumption is not
+          implemented.
+        </div>
+      </section>
+
+      <!-- ── Downloads – Configuration ── -->
+      <section class="section" id="download-config">
+        <h2>Downloads — Configuration</h2>
+        <pre><code>const engine = new DownloadEngine({
+  config: {
+    concurrency:       4,          // parallel connections     (default: 8)
+    chunkSizeBytes:    8 &lt;&lt; 20,   // 8 MiB chunk size         (default: 4 MiB)
+    progressIntervalMs: 500,       // progress event throttle  (default: 250 ms)
+    headers: { Authorization: "Bearer &lt;token&gt;" },
+    retry: {
+      maxAttempts:  5,             //                          (default: 5)
+      baseDelayMs:  500,           //                          (default: 500 ms)
+      maxDelayMs:   30_000,        //                          (default: 30 s)
+      jitterMs:     200,           //                          (default: 200 ms)
+    },
+  },
+  storeDir: "/var/lib/myapp/dl-sessions",
+});</code></pre>
+      </section>
+
+      <!-- ── Downloads – API Reference ── -->
+      <section class="section" id="download-api">
+        <h2>Downloads — API Reference</h2>
+
+        <h3>createDownloader(opts)</h3>
+        <table class="prop-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Required</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>url</code></td>
+              <td><code>string</code></td>
+              <td>✓</td>
+              <td>HTTP(S) URL to download</td>
+            </tr>
+            <tr>
+              <td><code>outputPath</code></td>
+              <td><code>string</code></td>
+              <td>✓</td>
+              <td>Absolute path for the output file</td>
+            </tr>
+            <tr>
+              <td><code>config</code></td>
+              <td><code>Partial&lt;DownloadConfig&gt;</code></td>
+              <td></td>
+              <td>Override any engine defaults</td>
+            </tr>
+            <tr>
+              <td><code>storeDir</code></td>
+              <td><code>string</code></td>
+              <td></td>
+              <td>Session store directory</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Returns a <code>DownloadTask</code>.</p>
+
+        <h3>DownloadTask</h3>
+        <table class="prop-table">
+          <thead>
+            <tr>
+              <th>Method / Property</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>start(): Promise&lt;DownloadSession&gt;</code></td>
+              <td>
+                Begin (or resume) the download. Rejects with
+                <code>DownloadError</code> on failure.
+              </td>
+            </tr>
+            <tr>
+              <td><code>pause()</code></td>
+              <td>
+                Stop dispatching new chunks; in-flight chunks finish naturally.
+              </td>
+            </tr>
+            <tr>
+              <td><code>resume()</code></td>
+              <td>Re-enable dispatching after a pause.</td>
+            </tr>
+            <tr>
+              <td><code>cancel(): Promise&lt;void&gt;</code></td>
+              <td>Abort and persist a resumable cancelled session.</td>
+            </tr>
+            <tr>
+              <td><code>on(event, handler)</code></td>
+              <td>
+                Subscribe to <code>progress</code>, <code>completed</code>,
+                <code>error</code>, <code>log</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>off(event, handler)</code></td>
+              <td>Unsubscribe.</td>
+            </tr>
+            <tr>
+              <td><code>getSession()</code></td>
+              <td>
+                Returns the current in-memory <code>DownloadSession</code> (or
+                <code>null</code> before <code>start()</code>).
+              </td>
+            </tr>
+            <tr>
+              <td><code>id</code></td>
+              <td>The 16-hex-char session ID.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>DownloadProgress</h3>
+        <table class="prop-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>sessionId</code></td>
+              <td><code>string</code></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td><code>bytesDownloaded</code></td>
+              <td><code>number</code></td>
+              <td>Bytes written so far</td>
+            </tr>
+            <tr>
+              <td><code>totalBytes</code></td>
+              <td><code>number | null</code></td>
+              <td><code>null</code> if no Content-Length</td>
+            </tr>
+            <tr>
+              <td><code>percent</code></td>
+              <td><code>number | null</code></td>
+              <td>
+                0–100; <code>null</code> when <code>totalBytes</code> is
+                <code>null</code>
+              </td>
+            </tr>
+            <tr>
+              <td><code>speedBytesPerSec</code></td>
+              <td><code>number</code></td>
+              <td>EMA-smoothed; 0 when stalled</td>
+            </tr>
+            <tr>
+              <td><code>eta</code></td>
+              <td><code>number | null</code></td>
+              <td>Remaining seconds; <code>null</code> when unknown</td>
+            </tr>
+            <tr>
+              <td><code>chunksTotal</code></td>
+              <td><code>number</code></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td><code>chunksDone</code></td>
+              <td><code>number</code></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td><code>chunksFailed</code></td>
+              <td><code>number</code></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Error Categories</h3>
+        <table class="prop-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Cause</th>
+              <th>Retried?</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>network</code></td>
+              <td>DNS / TCP failure</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td><code>timeout</code></td>
+              <td>Request timed out</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td><code>serverError</code></td>
+              <td>5xx response</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td><code>clientError</code></td>
+              <td>4xx response</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>rangeError</code></td>
+              <td>416 Range Not Satisfiable</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>auth</code></td>
+              <td>401 / 403</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>notFound</code></td>
+              <td>404</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>disk</code></td>
+              <td>I/O failure</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>staleSession</code></td>
+              <td>Server resource changed since session was saved</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>unknown</code></td>
+              <td>Unexpected error</td>
+              <td>No</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <!-- ── Architecture ── -->
       <section class="section" id="architecture">
         <h2>Architecture</h2>
@@ -2003,7 +2393,8 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
           >
           <span class="hl">│ @transferx/sdk │</span>
           │ <span class="ac">createB2Engine()</span> ·
-          <span class="ac">makeUploadSession()</span> │
+          <span class="ac">makeUploadSession()</span> ·
+          <span class="ac">createDownloader()</span> │
           <span class="hl"
             >└───────────────────────┬─────────────────────────────────┘</span
           >
@@ -2063,7 +2454,7 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
           border-top: 1px solid var(--border);
         "
       >
-        TransferX · MIT License · 215 tests passing
+        TransferX · MIT License · 244 tests passing
       </p>
     </main>
 

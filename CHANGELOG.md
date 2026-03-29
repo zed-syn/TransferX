@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.0] — 2025-07-20
+
+### Added
+
+- **`@transferx/downloader`** — new package providing an IDM-class parallel
+  HTTP download engine:
+  - Multi-connection range downloads with configurable concurrency (default: 8).
+  - Byte-level crash resume via a persistent JSON session store; session ID is
+    derived as `sha256(url + "\0" + outputPath).slice(0, 16)`.
+  - Server stale-detection before resuming: ETag → Last-Modified → file-size,
+    in order of preference.
+  - Per-chunk retry with truncated binary exponential back-off and full jitter;
+    non-retryable errors (4xx) throw immediately without consuming retry budget.
+  - EMA-smoothed `speedBytesPerSec`, `percent`, and `eta` via `ProgressEngine`
+    (alpha = 0.2, throttled to 250 ms intervals).
+  - Adaptive concurrency controller: sliding-window error-rate measurement
+    automatically lowers the connection ceiling under load and raises it when
+    the error rate recovers.
+  - Graceful single-stream fallback for servers that do not support `Range`
+    requests; resume is unavailable in this mode but progress still emits.
+  - `CapabilityDetector` — HEAD-based server feature discovery (range support,
+    Content-Length, ETag, Last-Modified).
+  - `RangePlanner` — splits file size into equal chunks; `end: -1` sentinel
+    for streaming (unknown-size) chunks; `rehydrate()` resets in-progress
+    chunk state for safe resume.
+  - `FileWriter` — pwrite-based streaming writes at precise byte offsets;
+    `'w'` flag on fresh open (prevents stale trailing bytes); `'r+'` flag on
+    resume (preserves existing bytes).
+  - `ResumeStore` — atomic JSON session persistence with per-chunk status
+    tracking, cancellation support, and error serialization.
+  - `DownloadTask` — public API: `start()`, `pause()`, `resume()`,
+    `cancel()`, typed event emitter (`progress`, `completed`, `error`, `log`).
+  - `createDownloadTask()` / `createDownloader()` — convenience factories.
+
+- **`@transferx/sdk`** re-exports all `@transferx/downloader` public types and
+  the `createDownloader()` factory.
+
+### Fixed
+
+- `FileWriter`: replaced inline `require("path")` with a proper
+  `import * as path from "path"` at the module level.
+- `RangePlanner.rehydrate()`: now correctly resets `bytesWritten` for chunks
+  with status `"failed"` as well as `"running"`.
+- `RangePlanner.plan()`: single-stream fallback chunk now uses `end: -1`
+  sentinel instead of the previously invalid `end: 0`.
+
+### Tests
+
+- Added 29 new tests (244 total across 14 suites):
+  - `downloader.test.ts` ×29: RangePlanner (5), FileWriter (3), RetryEngine (6),
+    ProgressEngine (3), ChunkScheduler (4), DownloadEngine integration (8).
+
+---
+
 ## [0.9.0] — 2025-07-16
 
 ### Fixed

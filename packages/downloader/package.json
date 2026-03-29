@@ -1,7 +1,7 @@
 {
-  "name": "@transferx/core",
-  "version": "0.1.3",
-  "description": "TransferX core engine — chunked upload state machine, retry logic, and events",
+  "name": "@transferx/downloader",
+  "version": "0.1.1",
+  "description": "IDM-class parallel download engine — multi-connection range downloads with byte-level resume, adaptive concurrency, and streaming writes",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "*",
     "typescript": "*"
   }
 }

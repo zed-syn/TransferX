@@ -39,11 +39,13 @@
       "^@transferx/adapter-b2$": "<rootDir>/packages/adapters/b2/src/index.ts",
       "^@transferx/adapter-http$": "<rootDir>/packages/adapters/http/src/index.ts",
       "^@transferx/adapter-s3$": "<rootDir>/packages/adapters/s3/src/index.ts",
+      "^@transferx/downloader$": "<rootDir>/packages/downloader/src/index.ts",
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "collectCoverageFrom": [
       "packages/*/src/**/*.ts",
-      "packages/adapters/*/src/**/*.ts"
+      "packages/adapters/*/src/**/*.ts",
+      "packages/downloader/src/**/*.ts"
     ]
   }
 }

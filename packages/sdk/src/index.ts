@@ -87,6 +87,29 @@ export type { B2AdapterOptions } from "@transferx/adapter-b2";
 export { S3Adapter, R2Adapter } from "@transferx/adapter-s3";
 export type { S3AdapterOptions, R2AdapterOptions } from "@transferx/adapter-s3";
 
+// ── Re-export the downloader public surface ────────────────────────────────────
+// Users only need to install @transferx/sdk — the downloader is included.
+
+export {
+  DownloadEngine,
+  DownloadTask,
+  createDownloadTask,
+} from "@transferx/downloader";
+export type {
+  DownloadConfig,
+  DownloadSession,
+  ChunkMeta,
+  DownloadProgress,
+  DownloadStatus,
+  ChunkStatus,
+  ErrorCategory,
+  ServerCapability,
+  ConcurrencyPolicy,
+  RetryPolicy,
+  DownloadResult,
+  DownloadEngineTask,
+} from "@transferx/downloader";
+
 // ── Shared imports ────────────────────────────────────────────────────────────
 
 import { B2Adapter } from "@transferx/adapter-b2";
@@ -345,4 +368,77 @@ export function createR2Engine(opts: CreateR2EngineOptions): EngineHandle {
     config,
     store,
   };
+}
+
+// ── HTTP Downloader factory ───────────────────────────────────────────────────
+
+import { DownloadEngine, DownloadTask } from "@transferx/downloader";
+import type { DownloadConfig } from "@transferx/downloader";
+
+export interface CreateDownloaderOptions {
+  /** Target URL to download from. */
+  url: string;
+  /**
+   * Absolute (or relative) path where the file will be written.
+   * The parent directory is created automatically.
+   */
+  outputPath: string;
+  /**
+   * Downloader configuration.
+   * Defaults: chunkSize=10 MiB, concurrency.initial=8, retry.maxAttempts=5,
+   *           timeoutMs=120_000, progressIntervalMs=200.
+   */
+  config?: Partial<DownloadConfig>;
+  /**
+   * Directory for persisted session state (crash recovery).
+   * Defaults to ".transferx-downloads". Use an absolute path for reliable
+   * restart recovery in long-running processes.
+   */
+  storeDir?: string;
+}
+
+/**
+ * Create a ready-to-start download task. The recommended entry point for
+ * download operations in the TransferX SDK.
+ *
+ * @example
+ * ```typescript
+ * import { createDownloader } from '@transferx/sdk';
+ *
+ * const task = createDownloader({
+ *   url: 'https://example.com/large-file.zip',
+ *   outputPath: '/downloads/large-file.zip',
+ *   config: { concurrency: { initial: 8 } },
+ *   storeDir: './.transferx-downloads',
+ * });
+ *
+ * task.on('progress', (p) => {
+ *   const speed = (p.speedBytesPerSec / 1e6).toFixed(1);
+ *   console.log(`${p.percent?.toFixed(1) ?? '?'}%  ${speed} MB/s`);
+ * });
+ * task.on('completed', ({ session }) => {
+ *   console.log('Downloaded to', session.outputPath);
+ * });
+ *
+ * await task.start();
+ * ```
+ *
+ * Resume after crash:
+ * ```typescript
+ * import { DownloadEngine, DownloadTask } from '@transferx/sdk';
+ *
+ * const engine = new DownloadEngine({ storeDir: './.transferx-downloads' });
+ * for (const session of await engine.listSessions()) {
+ *   const inner = await engine.resumeTask(session.id);
+ *   if (inner) await new DownloadTask(inner).start();
+ * }
+ * ```
+ */
+export function createDownloader(opts: CreateDownloaderOptions): DownloadTask {
+  const engine = new DownloadEngine({
+    ...(opts.config !== undefined ? { config: opts.config } : {}),
+    ...(opts.storeDir !== undefined ? { storeDir: opts.storeDir } : {}),
+  });
+  const inner = engine.createTask(opts.url, opts.outputPath);
+  return new DownloadTask(inner);
 }
