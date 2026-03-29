@@ -5,39 +5,71 @@
  *
  * This package is the recommended integration target for application code.
  * It re-exports the complete public surface of @transferx/core plus the
- * pre-built adapters, and provides a convenience factory function that
- * wires everything together in a single call.
+ * pre-built adapters, and provides convenience factory functions that wire
+ * everything together in a single call.
  *
- * Usage:
+ * Factories:
+ *   - createB2Engine()  — Backblaze B2
+ *   - createS3Engine()  — AWS S3
+ *   - createR2Engine()  — Cloudflare R2
+ *
+ * Usage (B2):
  *
  *   ```typescript
  *   import { createB2Engine, makeUploadSession } from '@transferx/sdk';
  *   import * as fs from 'fs';
  *
- *   const engine = createB2Engine({
- *     accountId: process.env.B2_ACCOUNT_ID!,
- *     applicationKey: process.env.B2_APP_KEY!,
- *     bucketId: process.env.B2_BUCKET_ID!,
- *   });
- *
- *   // Subscribe to progress events
- *   engine.bus.on('progress', ({ progress }) => {
- *     console.log(`${progress.percent.toFixed(1)}% — ${progress.speedBytesPerSec} B/s`);
+ *   const { upload, bus, config, store } = createB2Engine({
+ *     b2: {
+ *       applicationKeyId: process.env.B2_APPLICATION_KEY_ID!,
+ *       applicationKey:   process.env.B2_APP_KEY!,
+ *       bucketId:         process.env.B2_BUCKET_ID!,
+ *     },
  *   });
  *
  *   const stat = fs.statSync('/path/to/video.mp4');
- *   const config = engine.config;
- *
  *   const session = makeUploadSession('upload-01', {
- *     name: 'video.mp4',
- *     size: stat.size,
- *     mimeType: 'video/mp4',
+ *     name: 'video.mp4', size: stat.size, mimeType: 'video/mp4',
  *     path: '/path/to/video.mp4',
  *   }, 'uploads/2024/video.mp4', config);
  *
- *   await engine.store.save(session);
- *   const result = await engine.upload(session);
+ *   await store.save(session);
+ *   const result = await upload(session);
  *   console.log('Done:', result.state);
+ *   ```
+ *
+ * Usage (S3):
+ *
+ *   ```typescript
+ *   import { createS3Engine, makeUploadSession } from '@transferx/sdk';
+ *
+ *   const { upload, bus, config, store } = createS3Engine({
+ *     s3: {
+ *       bucket:      process.env.S3_BUCKET!,
+ *       region:      'us-east-1',
+ *       credentials: {
+ *         accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
+ *         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *       },
+ *     },
+ *   });
+ *   ```
+ *
+ * Usage (R2):
+ *
+ *   ```typescript
+ *   import { createR2Engine, makeUploadSession } from '@transferx/sdk';
+ *
+ *   const { upload, bus, config, store } = createR2Engine({
+ *     r2: {
+ *       accountId:   process.env.CF_ACCOUNT_ID!,
+ *       bucket:      process.env.R2_BUCKET!,
+ *       credentials: {
+ *         accessKeyId:     process.env.R2_ACCESS_KEY_ID!,
+ *         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+ *       },
+ *     },
+ *   });
  *   ```
  */
 
@@ -50,10 +82,17 @@ export * from "@transferx/core";
 export { B2Adapter } from "@transferx/adapter-b2";
 export type { B2AdapterOptions } from "@transferx/adapter-b2";
 
-// ── Convenience factory ───────────────────────────────────────────────────────
+// ── Re-export the S3 / R2 adapters ────────────────────────────────────────────
+
+export { S3Adapter, R2Adapter } from "@transferx/adapter-s3";
+export type { S3AdapterOptions, R2AdapterOptions } from "@transferx/adapter-s3";
+
+// ── Shared imports ────────────────────────────────────────────────────────────
 
 import { B2Adapter } from "@transferx/adapter-b2";
 import type { B2AdapterOptions } from "@transferx/adapter-b2";
+import { S3Adapter, R2Adapter } from "@transferx/adapter-s3";
+import type { S3AdapterOptions, R2AdapterOptions } from "@transferx/adapter-s3";
 import { UploadEngine } from "@transferx/core";
 import { EventBus } from "@transferx/core";
 import { MemorySessionStore } from "@transferx/core";
@@ -61,65 +100,91 @@ import { resolveEngineConfig } from "@transferx/core";
 import type { EngineConfig } from "@transferx/core";
 import type { ISessionStore } from "@transferx/core";
 
+// ── Shared engine shape ───────────────────────────────────────────────────────
+
+/**
+ * A fully-wired UploadEngine — returned by all createXxxEngine() factories.
+ * Subscribe to `bus` for events; call `upload()` or `resumeSession()` to transfer.
+ */
+export interface EngineHandle {
+  /** Upload a new session from scratch. Returns final TransferSession. */
+  upload: UploadEngine["upload"];
+  /** Resume a persisted session — reconciles remote state then re-uploads pending chunks. */
+  resumeSession: UploadEngine["resumeSession"];
+  /** Pause an in-process upload (in-flight chunks complete; no new chunks dispatched). */
+  pause: UploadEngine["pause"];
+  /** Resume an in-process paused scheduler (use resumeSession for crash recovery). */
+  resumeScheduler: UploadEngine["resumeScheduler"];
+  /** Cancel an active or persisted session. Best-effort remote abort. */
+  cancel: UploadEngine["cancel"];
+  /** Return the current persisted state of a session (null if not found). */
+  getSession: UploadEngine["getSession"];
+  /** Typed event bus — subscribe here for progress, lifecycle, and log events. */
+  bus: EventBus;
+  /** Fully resolved engine config (with defaults applied). */
+  config: EngineConfig;
+  /** The session store in use. Call store.listAll() to enumerate sessions on restart. */
+  store: ISessionStore;
+}
+
+// Helper to wire onLog → bus without duplicating it three times
+function _makeLogFn(
+  bus: EventBus,
+): (
+  level: Parameters<NonNullable<B2AdapterOptions["onLog"]>>[0],
+  message: string,
+  context?: Record<string, unknown>,
+) => void {
+  return (level, message, context) =>
+    bus.emit(
+      context !== undefined
+        ? { type: "log", level, message, context }
+        : { type: "log", level, message },
+    );
+}
+
+// ── Backblaze B2 factory ──────────────────────────────────────────────────────
+
 export interface CreateB2EngineOptions {
   /** B2 credentials and target bucket. */
   b2: B2AdapterOptions;
   /**
-   * Partial engine config. Missing fields use sensible TypeScript-inferred
-   * defaults (10 MiB chunks, 4 concurrent, 5 retries).
+   * Partial engine config — missing fields use defaults
+   * (10 MiB chunks, 4 concurrent, 5 retries).
    */
   config?: Partial<EngineConfig>;
   /**
-   * Custom session store. Defaults to an in-memory store.
-   * For durability across restarts, use FileSessionStore from @transferx/core.
+   * Session store. Defaults to in-memory.
+   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
    */
   store?: ISessionStore;
+  /**
+   * File-stat callback for change detection on resume.
+   * When provided, `resumeSession()` compares the file's current `mtimeMs`
+   * against the value stored in the session and throws `fileChangedError` if
+   * the file has been modified since the session was created.
+   *
+   * @example
+   * import { stat } from 'fs/promises';
+   * fileStatFn: (path) => stat(path)
+   */
+  fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
 }
 
-/**
- * Result of createB2Engine — a wired-up engine ready to call upload().
- */
-export interface B2Engine {
-  /** Upload a new session from scratch. */
-  upload: UploadEngine["upload"];
-  /** Resume a persisted session (crash recovery or explicit pause). */
-  resumeSession: UploadEngine["resumeSession"];
-  /** Pause an active in-process upload. */
-  pause: UploadEngine["pause"];
-  /** Resume an in-process paused scheduler (use resumeSession for crash recovery). */
-  resumeScheduler: UploadEngine["resumeScheduler"];
-  /** Cancel and abort a session (in-flight or persisted). */
-  cancel: UploadEngine["cancel"];
-  /** Get the current persisted state of a session. */
-  getSession: UploadEngine["getSession"];
-  /** Public event bus — subscribe here for progress, lifecycle events. */
-  bus: EventBus;
-  /** The resolved config (with defaults filled in). */
-  config: EngineConfig;
-  /** The session store being used. */
-  store: ISessionStore;
-}
+/** @deprecated Use {@link EngineHandle} — B2Engine is an alias kept for backwards compat. */
+export type B2Engine = EngineHandle;
 
 /**
  * Create a fully-wired UploadEngine configured for Backblaze B2.
- *
- * This is the recommended starting point for new integrations.
- * For custom adapters, instantiate UploadEngine directly from @transferx/core.
+ * This is the recommended starting point for B2 integrations.
  */
-export function createB2Engine(opts: CreateB2EngineOptions): B2Engine {
+export function createB2Engine(opts: CreateB2EngineOptions): EngineHandle {
   const config = resolveEngineConfig(opts.config ?? {});
   const bus = new EventBus();
   const store = opts.store ?? new MemorySessionStore();
   const adapter = new B2Adapter({
     ...opts.b2,
-    // Wire adapter-level log events into the shared event bus so consumers
-    // see auth-refresh warnings alongside engine-level log events.
-    onLog: (level, message, context) =>
-      bus.emit(
-        context !== undefined
-          ? { type: "log", level, message, context }
-          : { type: "log", level, message },
-      ),
+    onLog: _makeLogFn(bus),
   });
 
   const engine = new UploadEngine({
@@ -127,6 +192,146 @@ export function createB2Engine(opts: CreateB2EngineOptions): B2Engine {
     store,
     bus,
     config: opts.config ?? {},
+    ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
+  });
+
+  return {
+    upload: engine.upload.bind(engine),
+    resumeSession: engine.resumeSession.bind(engine),
+    pause: engine.pause.bind(engine),
+    resumeScheduler: engine.resumeScheduler.bind(engine),
+    cancel: engine.cancel.bind(engine),
+    getSession: engine.getSession.bind(engine),
+    bus,
+    config,
+    store,
+  };
+}
+
+// ── AWS S3 factory ────────────────────────────────────────────────────────────
+
+export interface CreateS3EngineOptions {
+  /** S3 connection options (bucket, region, credentials, etc.). */
+  s3: S3AdapterOptions;
+  /** Partial engine config — missing fields use defaults. */
+  config?: Partial<EngineConfig>;
+  /**
+   * Session store. Defaults to in-memory.
+   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   */
+  store?: ISessionStore;
+  /**
+   * File-stat callback for change detection on resume.
+   * @see {@link CreateB2EngineOptions.fileStatFn}
+   */
+  fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+}
+
+/**
+ * Create a fully-wired UploadEngine configured for AWS S3.
+ *
+ * @example
+ * ```typescript
+ * import { createS3Engine, makeUploadSession, FileSessionStore } from '@transferx/sdk';
+ *
+ * const { upload, bus, config, store } = createS3Engine({
+ *   s3: {
+ *     bucket:      'my-bucket',
+ *     region:      'us-east-1',
+ *     credentials: {
+ *       accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
+ *       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *     },
+ *   },
+ *   store: new FileSessionStore('./.transferx-sessions'),
+ * });
+ * ```
+ */
+export function createS3Engine(opts: CreateS3EngineOptions): EngineHandle {
+  const config = resolveEngineConfig(opts.config ?? {});
+  const bus = new EventBus();
+  const store = opts.store ?? new MemorySessionStore();
+  const adapter = new S3Adapter({
+    ...opts.s3,
+    onLog: _makeLogFn(bus),
+  });
+
+  const engine = new UploadEngine({
+    adapter,
+    store,
+    bus,
+    config: opts.config ?? {},
+    ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
+  });
+
+  return {
+    upload: engine.upload.bind(engine),
+    resumeSession: engine.resumeSession.bind(engine),
+    pause: engine.pause.bind(engine),
+    resumeScheduler: engine.resumeScheduler.bind(engine),
+    cancel: engine.cancel.bind(engine),
+    getSession: engine.getSession.bind(engine),
+    bus,
+    config,
+    store,
+  };
+}
+
+// ── Cloudflare R2 factory ─────────────────────────────────────────────────────
+
+export interface CreateR2EngineOptions {
+  /** R2 connection options (accountId, bucket, credentials). */
+  r2: R2AdapterOptions;
+  /** Partial engine config — missing fields use defaults. */
+  config?: Partial<EngineConfig>;
+  /**
+   * Session store. Defaults to in-memory.
+   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   */
+  store?: ISessionStore;
+  /**
+   * File-stat callback for change detection on resume.
+   * @see {@link CreateB2EngineOptions.fileStatFn}
+   */
+  fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+}
+
+/**
+ * Create a fully-wired UploadEngine configured for Cloudflare R2.
+ * Endpoint, region, and forcePathStyle are set automatically.
+ *
+ * @example
+ * ```typescript
+ * import { createR2Engine, makeUploadSession, FileSessionStore } from '@transferx/sdk';
+ *
+ * const { upload, bus, config, store } = createR2Engine({
+ *   r2: {
+ *     accountId:   process.env.CF_ACCOUNT_ID!,
+ *     bucket:      'my-r2-bucket',
+ *     credentials: {
+ *       accessKeyId:     process.env.R2_ACCESS_KEY_ID!,
+ *       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+ *     },
+ *   },
+ *   store: new FileSessionStore('./.transferx-sessions'),
+ * });
+ * ```
+ */
+export function createR2Engine(opts: CreateR2EngineOptions): EngineHandle {
+  const config = resolveEngineConfig(opts.config ?? {});
+  const bus = new EventBus();
+  const store = opts.store ?? new MemorySessionStore();
+  const adapter = new R2Adapter({
+    ...opts.r2,
+    onLog: _makeLogFn(bus),
+  });
+
+  const engine = new UploadEngine({
+    adapter,
+    store,
+    bus,
+    config: opts.config ?? {},
+    ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
   });
 
   return {

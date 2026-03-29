@@ -13,7 +13,8 @@
     "dist"
   ],
   "dependencies": {
-    "@transferx/core": "0.1.1",
-    "@transferx/adapter-b2": "0.1.2"
+    "@transferx/adapter-b2": "0.1.3",
+    "@transferx/adapter-s3": "0.1.2",
+    "@transferx/core": "0.1.2"
   }
 }

@@ -635,7 +635,7 @@
         <a href="#stores">Session Stores</a>
 
         <div class="section-label">API Reference</div>
-        <a href="#api-factory">createB2Engine()</a>
+        <a href="#api-factory">Factory Functions</a>
         <a href="#api-session">makeUploadSession()</a>
         <a href="#api-engine">UploadEngine</a>
         <a href="#api-eventbus">EventBus</a>
@@ -658,7 +658,7 @@
     <main id="main">
       <!-- ── Overview ── -->
       <section class="section" id="overview">
-        <h1>TransferX <span class="badge">Alpha</span></h1>
+        <h1>TransferX <span class="badge">v0.1</span></h1>
         <p>
           Enterprise-grade chunked file transfer SDK for Node.js. Built around
           three pillars: <strong>reliability</strong> (retry with exponential
@@ -671,8 +671,9 @@
           <div class="pkg-card">
             <div class="name">@transferx/sdk</div>
             <div class="desc">
-              Public entry point. <code>createB2Engine()</code> factory. Start
-              here.
+              Public entry point. <code>createB2Engine()</code>,
+              <code>createS3Engine()</code>, <code>createR2Engine()</code>
+              factories. Start here.
             </div>
           </div>
           <div class="pkg-card">
@@ -687,27 +688,39 @@
               Backblaze B2 native API adapter. Multipart uploads.
             </div>
           </div>
+          <div class="pkg-card">
+            <div class="name">@transferx/adapter-s3</div>
+            <div class="desc">
+              AWS S3 and Cloudflare R2 multipart upload adapter via
+              <code>@aws-sdk/client-s3</code> v3.
+            </div>
+          </div>
         </div>
 
         <div class="callout info">
-          <strong>Note</strong>
-          Currently in alpha. The API is stable but not yet semver-pinned. Pin
-          to a commit SHA for production use.
+          <strong>Production-ready</strong>
+          All packages are published to npm. Production deployments should pin
+          to an exact version (e.g. <code>"@transferx/sdk": "0.1.2"</code>).
+          Semver patch releases are backwards-compatible; minor releases may add
+          new exports.
         </div>
       </section>
 
       <!-- ── Installation ── -->
       <section class="section" id="installation">
         <h2>Installation</h2>
-        <pre><code><span class="cm"># npm</span>
+        <pre><code><span class="cm"># Backblaze B2</span>
 npm install @transferx/sdk
 
-<span class="cm"># pnpm</span>
-pnpm add @transferx/sdk</code></pre>
+<span class="cm"># AWS S3 or Cloudflare R2</span>
+npm install @transferx/sdk @transferx/adapter-s3</code></pre>
 
         <p>
           Requires Node.js 18+ (uses native <code>fetch</code> and
-          <code>crypto.subtle</code>).
+          <code>crypto.subtle</code>). The <code>@transferx/sdk</code> package
+          re-exports all factories (<code>createB2Engine</code>,
+          <code>createS3Engine</code>, <code>createR2Engine</code>) from a
+          single entry point — install the matching adapter package for S3/R2.
         </p>
       </section>
 
@@ -1115,14 +1128,19 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
 
       <hr />
 
-      <!-- ── API: createB2Engine ── -->
+      <!-- ── API: Factory Functions ── -->
       <section class="section" id="api-factory">
-        <h2>createB2Engine(opts)</h2>
+        <h2>Factory Functions</h2>
         <p>
-          High-level factory. Wires together B2Adapter, UploadEngine, EventBus,
-          and a session store.
+          All three factories share the same return shape
+          (<code>EngineHandle</code>) and the same optional <code>config</code>,
+          <code>store</code>, and <code>fileStatFn</code> options. They wire
+          together the adapter, <code>UploadEngine</code>,
+          <code>EventBus</code>, and a session store so you never touch the
+          low-level classes.
         </p>
 
+        <h3>createB2Engine(opts)</h3>
         <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createB2Engine</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
 
 <span class="kw">const</span> <span class="pr">engine</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span>
@@ -1131,17 +1149,66 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
     <span class="pr">applicationKey</span><span class="pn">:</span>   <span class="str">'...'</span><span class="pn">,</span>  <span class="cm">// B2 secret</span>
     <span class="pr">bucketId</span><span class="pn">:</span>         <span class="str">'...'</span><span class="pn">,</span>  <span class="cm">// target bucket</span>
   <span class="pn">},</span>
-  <span class="pr">config</span><span class="pn">?:</span>  <span class="ty">Partial</span><span class="pn">&lt;</span><span class="ty">EngineConfig</span><span class="pn">&gt;,</span>
-  <span class="pr">store</span><span class="pn">?:</span>   <span class="ty">ISessionStore</span><span class="pn">,</span>     <span class="cm">// defaults to MemorySessionStore</span>
-<span class="pn">});</span>
+  <span class="pr">config</span><span class="pn">?:</span>      <span class="ty">Partial</span><span class="pn">&lt;</span><span class="ty">EngineConfig</span><span class="pn">&gt;,</span>
+  <span class="pr">store</span><span class="pn">?:</span>       <span class="ty">ISessionStore</span><span class="pn">,</span>     <span class="cm">// defaults to MemorySessionStore</span>
+  <span class="pr">fileStatFn</span><span class="pn">?:</span>  <span class="pn">(</span><span class="pr">path</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">)</span> <span class="op">=></span> <span class="ty">Promise</span><span class="pn">&lt;{</span> <span class="pr">mtimeMs</span><span class="pn">:</span> <span class="ty">number</span> <span class="pn">}&gt;,</span>
+<span class="pn">});</span></code></pre>
 
-<span class="cm">// Returns:</span>
-<span class="pn">{</span>
+        <h3>createS3Engine(opts)</h3>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createS3Engine</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">engine</span> <span class="op">=</span> <span class="fn">createS3Engine</span><span class="pn">({</span>
+  <span class="pr">s3</span><span class="pn">: {</span>
+    <span class="pr">bucket</span><span class="pn">:</span>      <span class="str">'my-bucket'</span><span class="pn">,</span>
+    <span class="pr">region</span><span class="pn">:</span>      <span class="str">'us-east-1'</span><span class="pn">,</span>
+    <span class="pr">credentials</span><span class="pn">: {</span>
+      <span class="pr">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_ACCESS_KEY_ID</span><span class="op">!</span><span class="pn">,</span>
+      <span class="pr">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_SECRET_ACCESS_KEY</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pn">},</span>
+  <span class="pn">},</span>
+  <span class="pr">config</span><span class="pn">?:</span>      <span class="ty">Partial</span><span class="pn">&lt;</span><span class="ty">EngineConfig</span><span class="pn">&gt;,</span>
+  <span class="pr">store</span><span class="pn">?:</span>       <span class="ty">ISessionStore</span><span class="pn">,</span>
+  <span class="pr">fileStatFn</span><span class="pn">?:</span>  <span class="pn">(</span><span class="pr">path</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">)</span> <span class="op">=></span> <span class="ty">Promise</span><span class="pn">&lt;{</span> <span class="pr">mtimeMs</span><span class="pn">:</span> <span class="ty">number</span> <span class="pn">}&gt;,</span>
+<span class="pn">});</span></code></pre>
+
+        <h3>createR2Engine(opts)</h3>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createR2Engine</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="pr">engine</span> <span class="op">=</span> <span class="fn">createR2Engine</span><span class="pn">({</span>
+  <span class="pr">r2</span><span class="pn">: {</span>
+    <span class="pr">accountId</span><span class="pn">:</span>   <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">CF_ACCOUNT_ID</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pr">bucket</span><span class="pn">:</span>      <span class="str">'my-r2-bucket'</span><span class="pn">,</span>
+    <span class="pr">credentials</span><span class="pn">: {</span>
+      <span class="pr">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_ACCESS_KEY_ID</span><span class="op">!</span><span class="pn">,</span>
+      <span class="pr">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_SECRET_ACCESS_KEY</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pn">},</span>
+  <span class="pn">},</span>
+  <span class="pr">config</span><span class="pn">?:</span>      <span class="ty">Partial</span><span class="pn">&lt;</span><span class="ty">EngineConfig</span><span class="pn">&gt;,</span>
+  <span class="pr">store</span><span class="pn">?:</span>       <span class="ty">ISessionStore</span><span class="pn">,</span>
+  <span class="pr">fileStatFn</span><span class="pn">?:</span>  <span class="pn">(</span><span class="pr">path</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">)</span> <span class="op">=></span> <span class="ty">Promise</span><span class="pn">&lt;{</span> <span class="pr">mtimeMs</span><span class="pn">:</span> <span class="ty">number</span> <span class="pn">}&gt;,</span>
+<span class="pn">});</span></code></pre>
+
+        <h3>Return value — EngineHandle</h3>
+        <pre><code><span class="pn">{</span>
   <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">:</span> <span class="ty">TransferSession</span><span class="pn">):</span> <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">TransferSession</span><span class="pn">&gt;;</span>
+  <span class="fn">resumeSession</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span>   <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">TransferSession</span><span class="pn">&gt;;</span>
+  <span class="fn">pause</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span>           <span class="kw">void</span><span class="pn">;</span>
+  <span class="fn">resumeScheduler</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span> <span class="kw">void</span><span class="pn">;</span>
+  <span class="fn">cancel</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span>          <span class="ty">Promise</span><span class="pn">&lt;</span><span class="kw">void</span><span class="pn">&gt;;</span>
+  <span class="fn">getSession</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">:</span> <span class="ty">string</span><span class="pn">):</span>      <span class="ty">Promise</span><span class="pn">&lt;</span><span class="ty">TransferSession</span> <span class="op">|</span> <span class="kw">null</span><span class="pn">&gt;;</span>
   <span class="pr">bus</span><span class="pn">:</span>    <span class="ty">EventBus</span><span class="pn">;</span>
   <span class="pr">config</span><span class="pn">:</span> <span class="ty">EngineConfig</span><span class="pn">;</span>
   <span class="pr">store</span><span class="pn">:</span>  <span class="ty">ISessionStore</span><span class="pn">;</span>
 <span class="pn">}</span></code></pre>
+
+        <div class="callout info">
+          <strong>fileStatFn</strong> — supply this to enable file-change
+          detection on resume. If the file's <code>mtimeMs</code> has changed
+          since the session was created, <code>resumeSession()</code> will
+          reject rather than silently upload stale data. Defaults to
+          <code>fs.stat</code> when <code>path</code> is set in the session's
+          <code>FileDescriptor</code>.
+        </div>
       </section>
 
       <!-- ── API: makeUploadSession ── -->
@@ -1201,8 +1268,9 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
       <section class="section" id="api-engine">
         <h2>UploadEngine</h2>
         <p>
-          Low-level orchestrator. Use <code>createB2Engine()</code> unless you
-          need a custom adapter.
+          Low-level orchestrator. Use <code>createB2Engine()</code>,
+          <code>createS3Engine()</code>, or <code>createR2Engine()</code> unless
+          you need a custom adapter.
         </p>
 
         <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="ty">UploadEngine</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
@@ -1527,29 +1595,32 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
           </table>
         </div>
 
-        <h3>Usage</h3>
-        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="id">S3Adapter</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/adapter-s3'</span><span class="pn">;</span>
-<span class="kw">import</span> <span class="pn">{</span>
-  <span class="id">UploadEngine</span><span class="pn">,</span> <span class="id">EventBus</span><span class="pn">,</span> <span class="id">MemorySessionStore</span><span class="pn">,</span> <span class="id">resolveEngineConfig</span><span class="pn">,</span>
-<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+        <h3>Usage (recommended — via SDK factory)</h3>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createS3Engine</span><span class="pn">,</span> <span class="fn">makeUploadSession</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+<span class="kw">import</span> <span class="pn">*</span> <span class="kw">as</span> <span class="ty">fs</span> <span class="kw">from</span> <span class="str">'fs'</span><span class="pn">;</span>
 
-<span class="kw">const</span> <span class="id">adapter</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">S3Adapter</span><span class="pn">({</span>
-  <span class="id">bucket</span><span class="pn">:</span> <span class="str">'my-bucket'</span><span class="pn">,</span>
-  <span class="id">region</span><span class="pn">:</span> <span class="str">'us-east-1'</span><span class="pn">,</span>
-  <span class="id">credentials</span><span class="pn">:</span> <span class="pn">{</span>
-    <span class="id">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_ACCESS_KEY_ID</span><span class="pn">!,</span>
-    <span class="id">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_SECRET_ACCESS_KEY</span><span class="pn">!,</span>
+<span class="kw">const</span> <span class="pn">{</span> <span class="pr">upload</span><span class="pn">,</span> <span class="pr">bus</span><span class="pn">,</span> <span class="pr">config</span><span class="pn">,</span> <span class="pr">store</span> <span class="pn">}</span> <span class="op">=</span> <span class="fn">createS3Engine</span><span class="pn">({</span>
+  <span class="pr">s3</span><span class="pn">: {</span>
+    <span class="pr">bucket</span><span class="pn">:</span>      <span class="str">'my-bucket'</span><span class="pn">,</span>
+    <span class="pr">region</span><span class="pn">:</span>      <span class="str">'us-east-1'</span><span class="pn">,</span>
+    <span class="pr">credentials</span><span class="pn">: {</span>
+      <span class="pr">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_ACCESS_KEY_ID</span><span class="op">!</span><span class="pn">,</span>
+      <span class="pr">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_SECRET_ACCESS_KEY</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pn">},</span>
   <span class="pn">},</span>
 <span class="pn">});</span>
 
-<span class="kw">const</span> <span class="id">engine</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">UploadEngine</span><span class="pn">(</span>
-  <span class="id">adapter</span><span class="pn">,</span>
-  <span class="kw">new</span> <span class="ty">EventBus</span><span class="pn">(),</span>
-  <span class="kw">new</span> <span class="ty">MemorySessionStore</span><span class="pn">(),</span>
-  <span class="id">resolveEngineConfig</span><span class="pn">({}),</span>
+<span class="kw">const</span> <span class="pr">stat</span>    <span class="op">=</span> <span class="pr">fs</span><span class="pn">.</span><span class="fn">statSync</span><span class="pn">(</span><span class="str">'./video.mp4'</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pr">session</span> <span class="op">=</span> <span class="fn">makeUploadSession</span><span class="pn">(</span>
+  <span class="str">'upload-001'</span><span class="pn">,</span>
+  <span class="pn">{</span> <span class="pr">name</span><span class="pn">:</span> <span class="str">'video.mp4'</span><span class="pn">,</span> <span class="pr">size</span><span class="pn">:</span> <span class="pr">stat</span><span class="pn">.</span><span class="pr">size</span><span class="pn">,</span> <span class="pr">mimeType</span><span class="pn">:</span> <span class="str">'video/mp4'</span><span class="pn">,</span> <span class="pr">path</span><span class="pn">:</span> <span class="str">'./video.mp4'</span> <span class="pn">},</span>
+  <span class="str">'uploads/video.mp4'</span><span class="pn">,</span>
+  <span class="pr">config</span><span class="pn">,</span>
 <span class="pn">);</span>
 
-<span class="kw">await</span> <span class="id">engine</span><span class="pn">.</span><span class="id">upload</span><span class="pn">(</span><span class="id">file</span><span class="pn">,</span> <span class="pn">{</span> <span class="id">key</span><span class="pn">:</span> <span class="str">'uploads/video.mp4'</span> <span class="pn">});</span></code></pre>
+<span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pr">result</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
+<span class="cm">// result.state === 'done'</span></code></pre>
 
         <h3>Notes</h3>
         <ul>
@@ -1651,29 +1722,32 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
           directly when using <code>R2Adapter</code>.
         </div>
 
-        <h3>Usage</h3>
-        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="id">R2Adapter</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/adapter-s3'</span><span class="pn">;</span>
-<span class="kw">import</span> <span class="pn">{</span>
-  <span class="id">UploadEngine</span><span class="pn">,</span> <span class="id">EventBus</span><span class="pn">,</span> <span class="id">MemorySessionStore</span><span class="pn">,</span> <span class="id">resolveEngineConfig</span><span class="pn">,</span>
-<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+        <h3>Usage (recommended — via SDK factory)</h3>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createR2Engine</span><span class="pn">,</span> <span class="fn">makeUploadSession</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
+<span class="kw">import</span> <span class="pn">*</span> <span class="kw">as</span> <span class="ty">fs</span> <span class="kw">from</span> <span class="str">'fs'</span><span class="pn">;</span>
 
-<span class="kw">const</span> <span class="id">adapter</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">R2Adapter</span><span class="pn">({</span>
-  <span class="id">accountId</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">CF_ACCOUNT_ID</span><span class="pn">!,</span>
-  <span class="id">bucket</span><span class="pn">:</span>    <span class="str">'my-r2-bucket'</span><span class="pn">,</span>
-  <span class="id">credentials</span><span class="pn">:</span> <span class="pn">{</span>
-    <span class="id">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_ACCESS_KEY_ID</span><span class="pn">!,</span>
-    <span class="id">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_SECRET_ACCESS_KEY</span><span class="pn">!,</span>
+<span class="kw">const</span> <span class="pn">{</span> <span class="pr">upload</span><span class="pn">,</span> <span class="pr">bus</span><span class="pn">,</span> <span class="pr">config</span><span class="pn">,</span> <span class="pr">store</span> <span class="pn">}</span> <span class="op">=</span> <span class="fn">createR2Engine</span><span class="pn">({</span>
+  <span class="pr">r2</span><span class="pn">: {</span>
+    <span class="pr">accountId</span><span class="pn">:</span>   <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">CF_ACCOUNT_ID</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pr">bucket</span><span class="pn">:</span>      <span class="str">'my-r2-bucket'</span><span class="pn">,</span>
+    <span class="pr">credentials</span><span class="pn">: {</span>
+      <span class="pr">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_ACCESS_KEY_ID</span><span class="op">!</span><span class="pn">,</span>
+      <span class="pr">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_SECRET_ACCESS_KEY</span><span class="op">!</span><span class="pn">,</span>
+    <span class="pn">},</span>
   <span class="pn">},</span>
 <span class="pn">});</span>
 
-<span class="kw">const</span> <span class="id">engine</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">UploadEngine</span><span class="pn">(</span>
-  <span class="id">adapter</span><span class="pn">,</span>
-  <span class="kw">new</span> <span class="ty">EventBus</span><span class="pn">(),</span>
-  <span class="kw">new</span> <span class="ty">MemorySessionStore</span><span class="pn">(),</span>
-  <span class="id">resolveEngineConfig</span><span class="pn">({}),</span>
+<span class="kw">const</span> <span class="pr">stat</span>    <span class="op">=</span> <span class="pr">fs</span><span class="pn">.</span><span class="fn">statSync</span><span class="pn">(</span><span class="str">'./video.mp4'</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pr">session</span> <span class="op">=</span> <span class="fn">makeUploadSession</span><span class="pn">(</span>
+  <span class="str">'upload-001'</span><span class="pn">,</span>
+  <span class="pn">{</span> <span class="pr">name</span><span class="pn">:</span> <span class="str">'video.mp4'</span><span class="pn">,</span> <span class="pr">size</span><span class="pn">:</span> <span class="pr">stat</span><span class="pn">.</span><span class="pr">size</span><span class="pn">,</span> <span class="pr">mimeType</span><span class="pn">:</span> <span class="str">'video/mp4'</span><span class="pn">,</span> <span class="pr">path</span><span class="pn">:</span> <span class="str">'./video.mp4'</span> <span class="pn">},</span>
+  <span class="str">'uploads/video.mp4'</span><span class="pn">,</span>
+  <span class="pr">config</span><span class="pn">,</span>
 <span class="pn">);</span>
 
-<span class="kw">await</span> <span class="id">engine</span><span class="pn">.</span><span class="id">upload</span><span class="pn">(</span><span class="id">file</span><span class="pn">,</span> <span class="pn">{</span> <span class="id">key</span><span class="pn">:</span> <span class="str">'uploads/video.mp4'</span> <span class="pn">});</span></code></pre>
+<span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
+<span class="kw">const</span> <span class="pr">result</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
+<span class="cm">// result.state === 'done'</span></code></pre>
 
         <h3>Notes</h3>
         <ul>
@@ -1834,8 +1908,9 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
             >┌───────────────────────▼─────────────────────────────────┐</span
           >
           │ Storage Provider Adapters │ │ <span class="ac">B2Adapter</span>
-          <span class="ac">S3Adapter</span> (planned) │ │ (native B2 API)
-          (aws-sdk v3 wrapper) │
+          <span class="ac">S3Adapter</span> &nbsp;
+          <span class="ac">R2Adapter</span> │ │ (native B2 API) (aws-sdk v3)
+          &nbsp;(Cloudflare R2) │
           <span class="hl"
             >└─────────────────────────────────────────────────────────┘</span
           >
@@ -1864,7 +1939,7 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
           border-top: 1px solid var(--border);
         "
       >
-        TransferX · MIT License · 152 tests passing
+        TransferX · MIT License · 215 tests passing
       </p>
     </main>
 

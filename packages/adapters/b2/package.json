@@ -12,6 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@transferx/core": "0.1.1"
+    "@transferx/core": "0.1.2"
   }
 }
