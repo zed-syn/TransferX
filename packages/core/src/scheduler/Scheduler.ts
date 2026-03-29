@@ -172,33 +172,34 @@ export class Scheduler {
    * Runs synchronously — safe to call from anywhere.
    */
   private _drain(): void {
-    if (this._destroyed || this._paused) return;
+    if (!this._paused && !this._destroyed) {
+      while (this._active < this._concurrency && this._queue.length > 0) {
+        const task = this._queue.shift();
+        if (!task) break;
 
-    while (this._active < this._concurrency && this._queue.length > 0) {
-      const task = this._queue.shift();
-      if (!task) break;
+        this._active += 1;
 
-      this._active += 1;
-
-      // Run the task asynchronously; handle its completion to decrement active
-      // and trigger another drain.
-      void task().then(
-        () => {
-          this._active -= 1;
-          this._totalExecuted += 1;
-          this._drain();
-        },
-        (_err: unknown) => {
-          // The task itself is responsible for error handling (retry engine wraps it).
-          // The scheduler only needs to know the slot is free.
-          this._active -= 1;
-          this._totalErrored += 1;
-          this._drain();
-        },
-      );
+        // Run the task asynchronously; handle its completion to decrement active
+        // and trigger another drain.
+        void task().then(
+          () => {
+            this._active -= 1;
+            this._totalExecuted += 1;
+            this._drain();
+          },
+          (_err: unknown) => {
+            // The task itself is responsible for error handling (retry engine wraps it).
+            // The scheduler only needs to know the slot is free.
+            this._active -= 1;
+            this._totalErrored += 1;
+            this._drain();
+          },
+        );
+      }
     }
 
-    // Notify drain() waiters when we go idle
+    // Notify drain() waiters when we go idle (regardless of paused state).
+    // This allows callers that called pause() to still observe the drain completing.
     if (
       this._active === 0 &&
       this._queue.length === 0 &&

@@ -41,6 +41,8 @@ export interface ChunkMeta {
   status: ChunkStatus;
   /** How many upload attempts have been made so far. */
   attempts: number;
+  /** How many times the retry engine retried this chunk (attempts - 1 successful). */
+  retries: number;
   /**
    * Opaque provider token returned by the adapter after a successful upload.
    * Used by multi-part completion calls (e.g. B2 partSha1, S3 ETag).
@@ -66,5 +68,5 @@ export function makeChunkMeta(
   if (offset < 0)
     throw new RangeError(`chunk offset must be >= 0, got ${offset}`);
   if (size <= 0) throw new RangeError(`chunk size must be > 0, got ${size}`);
-  return { index, offset, size, status: "pending", attempts: 0 };
+  return { index, offset, size, status: "pending", attempts: 0, retries: 0 };
 }

@@ -560,7 +560,7 @@ describe("UploadEngine — pause/resume", () => {
     });
 
     // Should not throw
-    expect(() => engine.pause()).not.toThrow();
-    expect(() => engine.resume()).not.toThrow();
+    expect(() => engine.pause("nonexistent")).not.toThrow();
+    expect(() => engine.resumeScheduler("nonexistent")).not.toThrow();
   });
 });

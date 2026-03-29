@@ -111,13 +111,12 @@ describe("state sets", () => {
     }
   });
 
-  it("resumable states contain paused and failed", () => {
+  it("resumable states contain paused, failed, and running (crash recovery)", () => {
     expect(RESUMABLE_STATES.has("paused")).toBe(true);
     expect(RESUMABLE_STATES.has("failed")).toBe(true);
-  });
-
-  it("running is not resumable", () => {
-    expect(RESUMABLE_STATES.has("running")).toBe(false);
+    // running is resumable for crash-recovery: if the process dies while
+    // uploading, the persisted session stays in 'running' and can be resumed.
+    expect(RESUMABLE_STATES.has("running")).toBe(true);
   });
 });
 

@@ -102,4 +102,33 @@ export interface ITransferAdapter {
    * @param session  - The session to abort.
    */
   abortTransfer(session: TransferSession): Promise<void>;
+
+  /**
+   * Optional: query the provider for the list of already-uploaded parts.
+   *
+   * Used during resume reconciliation to determine which chunks the provider
+   * already has, so the engine can skip re-uploading them.
+   *
+   * If not implemented by the adapter, the engine falls back to trusting
+   * local state alone (chunks with status === 'done' are assumed confirmed).
+   *
+   * @param session  - The session to query; `session.providerSessionId` is set.
+   * @returns        - Uploaded parts in provider order (partNumber is 1-based).
+   */
+  getRemoteState?(session: TransferSession): Promise<RemoteUploadState>;
+}
+
+// ── Remote state ─────────────────────────────────────────────────────────────
+
+/**
+ * Snapshot of what the provider already has for a multi-part upload.
+ * Returned by `getRemoteState()`.
+ */
+export interface RemoteUploadState {
+  uploadedParts: Array<{
+    /** 1-based part number (chunk.index + 1). */
+    partNumber: number;
+    /** Provider token (ETag for S3, SHA-1 for B2). */
+    providerToken: string;
+  }>;
 }

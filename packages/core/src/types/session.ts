@@ -28,9 +28,12 @@ import type { ChunkMeta } from "./chunk.js";
  *   running    → paused         (user calls pause())
  *   running    → done           (all chunks confirmed)
  *   running    → failed         (unrecoverable error)
- *   paused     → running        (user calls resume())
+ *   paused     → reconciling    (user calls resume() — reconcile before continuing)
+ *   failed     → reconciling    (user calls resume() after failure)
+ *   reconciling → running       (reconcile complete, re-queue pending chunks)
+ *   reconciling → failed        (reconcile itself failed)
  *   paused     → cancelled      (user calls cancel())
- *   failed     → queued         (user calls retry())
+ *   failed     → cancelled      (user calls cancel())
  *   queued     → cancelled      (user calls cancel() before start)
  *   running    → cancelled      (user calls cancel())
  */
@@ -40,6 +43,7 @@ export type SessionState =
   | "queued" // ready to run, waiting for concurrency slot in queue
   | "running" // chunks being actively transferred
   | "paused" // user-initiated pause
+  | "reconciling" // comparing local vs remote state before resuming
   | "failed" // at least one chunk reached fatal state
   | "done" // all chunks confirmed by remote
   | "cancelled"; // user cancelled — terminal state
@@ -49,7 +53,11 @@ export const TERMINAL_STATES = new Set<SessionState>([
   "cancelled",
   "failed",
 ]);
-export const RESUMABLE_STATES = new Set<SessionState>(["paused", "failed"]);
+export const RESUMABLE_STATES = new Set<SessionState>([
+  "paused",
+  "failed",
+  "running", // engine crashed mid-flight
+]);
 
 // ── Transfer direction ───────────────────────────────────────────────────────
 
@@ -130,9 +138,13 @@ const VALID_TRANSITIONS = new Map<SessionState, ReadonlySet<SessionState>>([
   ["created", new Set(["initializing", "cancelled"])],
   ["initializing", new Set(["queued", "failed", "cancelled"])],
   ["queued", new Set(["running", "cancelled"])],
-  ["running", new Set(["paused", "done", "failed", "cancelled"])],
-  ["paused", new Set(["running", "cancelled"])],
-  ["failed", new Set(["queued", "cancelled"])],
+  [
+    "running",
+    new Set(["paused", "done", "failed", "cancelled", "reconciling"]),
+  ],
+  ["paused", new Set(["running", "reconciling", "cancelled"])],
+  ["reconciling", new Set(["running", "done", "failed", "cancelled"])],
+  ["failed", new Set(["queued", "reconciling", "cancelled"])],
   ["done", new Set()],
   ["cancelled", new Set()],
 ]);

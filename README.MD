@@ -1,9 +1,13 @@
 # TransferX
 
+![npm](https://img.shields.io/npm/v/@transferx/sdk)
+![license](https://img.shields.io/github/license/zed-syn/TransferX)
+![tests](https://img.shields.io/badge/tests-168_passed-brightgreen)
+
 Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability — retries, resumability, observability, and pluggable storage backends.
 
 ```
-11 test suites · 152 tests · 0 compile errors
+12 test suites · 168 tests · 0 compile errors
 ```
 
 ---
@@ -131,20 +135,21 @@ const result = await upload(session);
 
 Subscribe via `bus.on(type, handler)`. All events are strongly typed.
 
-| Event               | Payload                                | When                                    |
-| ------------------- | -------------------------------------- | --------------------------------------- |
-| `session:created`   | `{ session }`                          | Session initialised, before any HTTP    |
-| `session:started`   | `{ session }`                          | All chunks queued, uploading begins     |
-| `session:paused`    | `{ session }`                          | `engine.pause()` called                 |
-| `session:resumed`   | `{ session }`                          | `engine.resume()` called                |
-| `session:done`      | `{ session }`                          | All chunks confirmed, transfer complete |
-| `session:failed`    | `{ session, error }`                   | Unrecoverable failure                   |
-| `session:cancelled` | `{ session }`                          | User cancelled                          |
-| `chunk:started`     | `{ session, chunk }`                   | Chunk upload begins                     |
-| `chunk:done`        | `{ session, chunk }`                   | Chunk confirmed by provider             |
-| `chunk:failed`      | `{ session, chunk, error, willRetry }` | Attempt failed, may retry               |
-| `chunk:fatal`       | `{ session, chunk, error }`            | Chunk exhausted retry budget            |
-| `progress`          | `{ progress }`                         | Throttled progress snapshot             |
+| Event                 | Payload                                | When                                    |
+| --------------------- | -------------------------------------- | --------------------------------------- |
+| `session:created`     | `{ session }`                          | Session initialised, before any HTTP    |
+| `session:started`     | `{ session }`                          | All chunks queued, uploading begins     |
+| `session:paused`      | `{ session }`                          | `engine.pause(id)` called               |
+| `session:resumed`     | `{ session }`                          | `engine.resumeScheduler(id)` called     |
+| `session:reconciling` | `{ session }`                          | Resume started; verifying remote state  |
+| `session:done`        | `{ session }`                          | All chunks confirmed, transfer complete |
+| `session:failed`      | `{ session, error }`                   | Unrecoverable failure                   |
+| `session:cancelled`   | `{ session }`                          | User cancelled                          |
+| `chunk:started`       | `{ session, chunk }`                   | Chunk upload begins                     |
+| `chunk:done`          | `{ session, chunk }`                   | Chunk confirmed by provider             |
+| `chunk:failed`        | `{ session, chunk, error, willRetry }` | Attempt failed, may retry               |
+| `chunk:fatal`         | `{ session, chunk, error }`            | Chunk exhausted retry budget            |
+| `progress`            | `{ progress }`                         | Throttled progress snapshot             |
 
 ### `TransferProgress` shape
 
@@ -166,14 +171,16 @@ interface TransferProgress {
 ```
 created → initializing → queued → running ──→ done
                                     │
-                                    ├──→ paused → running
+                                    ├──→ paused ──→ reconciling ──→ running
                                     │
-                                    └──→ failed → queued (retry)
+                                    ├──→ failed ──→ reconciling ──→ running
                                     │
                                     └──→ cancelled
 ```
 
-Sessions in `done` and `cancelled` are **terminal** — no further transitions.
+The `reconciling` state is entered when `resumeSession()` is called. The engine
+verifies which chunks the provider already has, corrects local state, then
+continues from where it left off.
 
 ---
 
@@ -281,13 +288,75 @@ import { FileSessionStore } from "@transferx/core";
 
 const store = new FileSessionStore("./.transferx-sessions");
 // Sessions are written atomically (write-to-tmp then rename)
-// On restart, load and resume:
+```
+
+---
+
+## Crash Recovery & Resume
+
+TransferX is designed so that a process crash at any point leaves the session in
+a recoverable state. On restart:
+
+```typescript
+import { createB2Engine, FileSessionStore } from "@transferx/sdk";
+
+const store = new FileSessionStore("./.transferx-sessions");
+const { resumeSession, bus } = createB2Engine({
+  b2: {
+    /* ... */
+  },
+  store,
+});
+
+bus.on("session:reconciling", ({ session }) =>
+  console.log(`Reconciling ${session.id} with provider…`),
+);
+bus.on("session:done", ({ session }) =>
+  console.log(`Resumed and completed: ${session.id}`),
+);
+
+// Resume all sessions that were interrupted
 const sessions = await store.listAll();
 for (const s of sessions) {
-  if (s.state === "failed" || s.state === "paused") {
-    await engine.upload(s); // resumes from last known good state
+  if (s.state === "failed" || s.state === "paused" || s.state === "running") {
+    await resumeSession(s.id);
   }
 }
+```
+
+`resumeSession()` will:
+
+1. Load the session from the store.
+2. Query the provider for already-uploaded parts (`getRemoteState`, if the adapter supports it).
+3. Mark confirmed parts as done, reset orphaned in-flight parts to pending.
+4. Re-upload only the parts that still need uploading.
+
+### Cancel, Pause, and Resume
+
+```typescript
+const { upload, resumeSession, pause, resumeScheduler, cancel, store } =
+  createB2Engine({
+    b2: {
+      /* ... */
+    },
+    store: new FileSessionStore(".sessions"),
+  });
+
+// Start an upload
+const uploadPromise = upload(session);
+
+// Pause in-process (scheduler stops dispatching new chunks)
+pause(session.id);
+
+// Resume in-process scheduler
+resumeScheduler(session.id);
+
+// Cancel — stops in-flight and marks cancelled in store
+await cancel(session.id);
+const result = await uploadPromise; // result.state === 'cancelled'
+
+// Resume after crash or explicit pause
+await resumeSession(session.id);
 ```
 
 ---
@@ -349,9 +418,10 @@ npx jest --testPathPattern="engine" --runInBand
 | `store.file.test.ts`   | 12    | Atomic writes, corruption guard    |
 | `eventbus.test.ts`     | 16    | on/off/emit/clear, dispatch safety |
 | `engine.test.ts`       | 34    | Full upload lifecycle              |
+| `resume.test.ts`       | 17    | Resume, cancel, reconcile, guards  |
 | `B2Adapter.test.ts`    | 15    | Mock-fetch B2 lifecycle            |
 
-**Total: 152 tests**
+**Total: 168 tests**
 
 ---
 

@@ -15,31 +15,32 @@
  *   9. Confirm bytes to ProgressEngine so it can emit live progress events.
  *  10. Finalise successful upload with adapter.completeTransfer().
  *  11. Abort on fatal failure (adapter.abortTransfer — best-effort).
- *  12. Expose pause() / resume() / cancel() for user-driven lifecycle control.
+ *  12. Expose pause(sessionId) / resume(sessionId) / cancel(sessionId) for lifecycle control.
  *
  * Design decisions:
  *
  * CANCELLATION:
- *   cancel() sets an internal flag; active chunk tasks see it between the
- *   await adapter.uploadChunk() and the confirmBytes() call and skip the
- *   success path. The session is transitioned to 'cancelled' after the
- *   scheduler drains. We never forcibly abort in-flight HTTP— the adapter's
- *   abortTransfer is called instead.
+ *   cancel(sessionId) sets a per-session flag in _cancelFlags. Active chunk
+ *   tasks check this flag and skip the success path. The session transitions to
+ *   'cancelled' after the scheduler drains, then adapter.abortTransfer() is called.
  *
- * CHUNK FAILURE vs SESSION FAILURE:
- *   A chunk that exhausts its retry budget marks itself 'fatal'. When the
- *   reconciliation pass after draining finds any 'fatal' chunk, the session
- *   transitions to 'failed'. This lets multiple chunks fail concurrently
- *   without interfering with each other before the final accounting.
+ * RESUME:
+ *   resume(sessionId) loads the persisted session, runs reconciliation
+ *   (optionally querying the provider for already-uploaded parts), resets
+ *   non-done chunks to 'pending', and re-runs _runChunks with only those chunks.
  *
- * CONCURRENCY:
- *   The Scheduler handles the concurrency cap. UploadEngine pushes one task
- *   per chunk and lets the Scheduler decide ordering and limits.
+ * RECONCILIATION:
+ *   If the adapter implements getRemoteState(), the engine compares remote
+ *   uploaded parts against local chunk state. Chunks the provider already has
+ *   are marked done (or kept done); chunks the local store thinks are done but
+ *   the provider doesn't have are reset to pending.
  *
- * PAUSE / RESUME:
- *   Delegated entirely to the Scheduler. The engine keeps no extra state for
- *   this — the session is transitioned to 'paused' / 'running' in the public
- *   method wrappers.
+ * ZERO-BYTE FILES:
+ *   Rejected immediately — multipart upload providers require at least one part.
+ *
+ * CONCURRENT UPLOAD GUARD:
+ *   The _activeUploads Set prevents the same sessionId from being uploaded
+ *   concurrently within the same engine instance.
  *
  * SHA-256:
  *   Computed using Node's built-in `crypto.createHash('sha256')`. The engine
@@ -59,9 +60,15 @@ import type { IEventBus } from "../types/events.js";
 import type { EngineConfig } from "../types/config.js";
 import { resolveEngineConfig } from "../types/config.js";
 import type { FileDescriptor, TransferSession } from "../types/session.js";
-import { transitionSession } from "../types/session.js";
+import { transitionSession, getTransferredBytes } from "../types/session.js";
 import type { ChunkMeta } from "../types/chunk.js";
-import { networkError } from "../types/errors.js";
+import {
+  networkError,
+  zeroByteError,
+  concurrentUploadError,
+  sessionNotFoundError,
+  invalidStateError,
+} from "../types/errors.js";
 
 // ── Public options ────────────────────────────────────────────────────────────
 
@@ -89,6 +96,13 @@ class ByteArrayChunkReader implements IChunkReader {
   async close(): Promise<void> {}
 }
 
+// ── Internal running-session handle ──────────────────────────────────────────
+
+interface ActiveUpload {
+  scheduler: Scheduler;
+  session: TransferSession;
+}
+
 // ── Engine ─────────────────────────────────────────────────────────────────────
 
 export class UploadEngine {
@@ -98,10 +112,10 @@ export class UploadEngine {
   private readonly _config: EngineConfig;
   private readonly _readerFactory: (file: FileDescriptor) => IChunkReader;
 
-  /** Active scheduler — only non-null while an upload() call is in progress. */
-  private _scheduler: Scheduler | null = null;
-  /** Active session — only non-null while an upload() call is in progress. */
-  private _activeSession: TransferSession | null = null;
+  /** sessionId → active upload handle. Prevents concurrent uploads of same session. */
+  private readonly _activeUploads = new Map<string, ActiveUpload>();
+  /** sessionId → true when cancel() has been called for an in-flight upload. */
+  private readonly _cancelFlags = new Set<string>();
 
   constructor(opts: UploadEngineOptions) {
     this._adapter = opts.adapter;
@@ -112,7 +126,6 @@ export class UploadEngine {
       opts.readerFactory ??
       ((file) => {
         // Dynamic import to avoid hard-coupling to Node in browser bundles.
-        // In practice the default path is only used when no factory is provided.
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { NodeChunkReader } =
           require("../chunker/NodeChunkReader.js") as {
@@ -131,17 +144,21 @@ export class UploadEngine {
   // ── Public API ───────────────────────────────────────────────────────────────
 
   /**
-   * Upload a file to the remote target.
-   *
-   * @param session  - A session object previously created and persisted by the
-   *                   caller.  It MUST be in 'created' state.
-   *                   The caller is responsible for building the session via
-   *                   makeUploadSession(), saving it to the store, and passing
-   *                   the saved copy here.
-   * @returns          The same session after it reaches a terminal state
-   *                   ('done' or 'failed').
+   * Upload a file from scratch.
+   * The session MUST be in 'created' state and already persisted to the store.
+   * Throws synchronously for zero-byte files or concurrent sessions.
    */
   async upload(session: TransferSession): Promise<TransferSession> {
+    // Guard: zero-byte files cannot use multipart
+    if (session.file.size === 0) {
+      throw zeroByteError();
+    }
+
+    // Guard: prevent concurrent uploads of the same session
+    if (this._activeUploads.has(session.id)) {
+      throw concurrentUploadError(session.id);
+    }
+
     // ----- 1. Initialise remote session ----------------------------------------
     transitionSession(session, "initializing");
     this._bus.emit({ type: "session:created", session });
@@ -167,12 +184,226 @@ export class UploadEngine {
     transitionSession(session, "queued");
     await this._store.save(session);
 
-    // ----- 3. Start running ----------------------------------------------------
+    // ----- 3. Run chunks -------------------------------------------------------
+    return this._runChunks(session, chunks);
+  }
+
+  /**
+   * Resume a session that was previously paused, failed, or whose process
+   * crashed mid-upload.
+   *
+   * Flow:
+   *   1. Load session from store.
+   *   2. Validate it can be resumed (not done/cancelled).
+   *   3. Reconcile local vs remote state.
+   *   4. Re-upload only pending/failed chunks.
+   *
+   * @throws {TransferError} with category 'sessionNotFound' if not in store.
+   * @throws {TransferError} with category 'invalidState' if session is done/cancelled.
+   * @throws {TransferError} with category 'concurrentUpload' if already active.
+   */
+  async resumeSession(sessionId: string): Promise<TransferSession> {
+    // ----- 1. Load -------------------------------------------------------
+    const session = await this._store.load(sessionId);
+    if (!session) {
+      throw sessionNotFoundError(sessionId);
+    }
+
+    // ----- 2. Validate state ─────────────────────────────────────────────
+    if (session.state === "done" || session.state === "cancelled") {
+      throw invalidStateError(sessionId, session.state, "resume");
+    }
+
+    if (this._activeUploads.has(sessionId)) {
+      throw concurrentUploadError(sessionId);
+    }
+
+    // ----- 3. Reconcile remote state ─────────────────────────────────────
+    transitionSession(session, "reconciling");
+    this._bus.emit({ type: "session:reconciling", session });
+    await this._store.save(session);
+
+    try {
+      await this._reconcile(session);
+    } catch (err) {
+      transitionSession(session, "failed");
+      session.updatedAt = Date.now();
+      const error = err instanceof Error ? err : new Error(String(err));
+      this._bus.emit({ type: "session:failed", session, error });
+      await this._store.save(session);
+      return session;
+    }
+
+    // ----- 4. Recompute transferredBytes from source-of-truth ────────────
+    session.transferredBytes = getTransferredBytes(session);
+
+    // ----- 5. Identify chunks still to upload ────────────────────────────
+    const pendingChunks = session.chunks.filter(
+      (c) =>
+        c.status === "pending" ||
+        c.status === "failed" ||
+        c.status === "uploading",
+    );
+
+    // Reset any 'uploading' chunks (the previous process died mid-flight)
+    for (const c of pendingChunks) {
+      if (c.status === "uploading") c.status = "pending";
+    }
+
+    if (pendingChunks.length === 0) {
+      // All chunks already done locally — go straight to complete
+      return this._complete(session);
+    }
+
+    // ----- 6. Re-run the scheduler for pending chunks ────────────────────
+    return this._runChunks(session, pendingChunks);
+  }
+
+  /**
+   * Pause an active upload.
+   * In-flight chunk tasks finish; no new tasks are dispatched until resumeSession().
+   * No-op if the session is not currently active in this engine.
+   */
+  pause(sessionId: string): void {
+    const active = this._activeUploads.get(sessionId);
+    if (!active) return;
+    active.scheduler.pause();
+    try {
+      transitionSession(active.session, "paused");
+    } catch {
+      // Already in a state that can't transition — safe to ignore
+    }
+    this._bus.emit({ type: "session:paused", session: active.session });
+  }
+
+  /**
+   * Resume a scheduler that was paused via pause().
+   * This resumes in-process scheduling — for crash recovery use resumeSession().
+   */
+  resumeScheduler(sessionId: string): void {
+    const active = this._activeUploads.get(sessionId);
+    if (!active) return;
+    try {
+      transitionSession(active.session, "running");
+    } catch {
+      // Already running — no-op
+    }
+    active.scheduler.resume();
+    this._bus.emit({ type: "session:resumed", session: active.session });
+  }
+
+  /**
+   * Cancel an active or persisted session.
+   *
+   * If the session is in-flight in this engine, the upload stops after the
+   * current in-flight chunks finish. If the session is only persisted, it is
+   * loaded, transitioned to cancelled, and the adapter is asked to abort.
+   */
+  async cancel(sessionId: string): Promise<void> {
+    const active = this._activeUploads.get(sessionId);
+    if (active) {
+      // Signal the running upload to stop
+      this._cancelFlags.add(sessionId);
+      active.scheduler.pause();
+      active.scheduler.clear(); // Drop queued-but-not-started tasks so drain() resolves
+      return; // The upload() / resumeSession() call handles cleanup after drain
+    }
+
+    // Not currently active — load + cancel from store
+    const session = await this._store.load(sessionId);
+    if (!session) return; // Nothing to cancel
+    if (session.state === "done" || session.state === "cancelled") return;
+
+    try {
+      transitionSession(session, "cancelled");
+    } catch {
+      return; // Couldn't transition — ignore
+    }
+    session.updatedAt = Date.now();
+    this._bus.emit({ type: "session:cancelled", session });
+    await this._store.save(session);
+    // Best-effort remote abort
+    await this._adapter.abortTransfer(session).catch(() => undefined);
+  }
+
+  /**
+   * Return the current persisted state of a session.
+   * Returns null if not found in the store.
+   */
+  async getSession(sessionId: string): Promise<TransferSession | null> {
+    return (await this._store.load(sessionId)) ?? null;
+  }
+
+  // ── Private implementation ────────────────────────────────────────────────
+
+  /**
+   * Reconcile local chunk states against what the provider actually has.
+   * Mutates chunk.status in-place.
+   */
+  private async _reconcile(session: TransferSession): Promise<void> {
+    if (!this._adapter.getRemoteState || !session.providerSessionId) {
+      // No remote state available — trust local state.
+      // Reset any 'uploading' chunks (orphaned from the previous run).
+      for (const c of session.chunks) {
+        if (c.status === "uploading") c.status = "pending";
+        if (c.status === "fatal") c.status = "pending"; // allow retry on resume
+      }
+      return;
+    }
+
+    let remoteState: Awaited<
+      ReturnType<ITransferAdapter["getRemoteState"] & {}>
+    >;
+    try {
+      remoteState = await this._adapter.getRemoteState(session);
+    } catch {
+      // Provider query failed — fall back to local state only
+      for (const c of session.chunks) {
+        if (c.status === "uploading") c.status = "pending";
+        if (c.status === "fatal") c.status = "pending";
+      }
+      return;
+    }
+
+    const remoteByPart = new Map(
+      remoteState.uploadedParts.map((p) => [p.partNumber, p.providerToken]),
+    );
+
+    for (const chunk of session.chunks) {
+      const remoteToken = remoteByPart.get(chunk.index + 1); // parts are 1-based
+      if (remoteToken !== undefined) {
+        // Provider has it — mark done and set/confirm providerToken
+        chunk.status = "done";
+        chunk.providerToken = remoteToken;
+      } else {
+        // Provider doesn't have it — reset to pending
+        if (chunk.status !== "done") {
+          chunk.status = "pending";
+        } else {
+          // Local says done but remote doesn't → reset
+          chunk.status = "pending";
+          delete (chunk as { providerToken?: string }).providerToken;
+        }
+      }
+    }
+  }
+
+  /**
+   * Schedule and execute uploads for the given chunk list.
+   * Handles the entire running → done/failed/cancelled lifecycle.
+   */
+  private async _runChunks(
+    session: TransferSession,
+    chunks: ChunkMeta[],
+  ): Promise<TransferSession> {
+    // Transition to running
     transitionSession(session, "running");
     this._bus.emit({ type: "session:started", session });
     await this._store.save(session);
 
-    // ----- 4. Set up progress engine -------------------------------------------
+    const alreadyTransferred = getTransferredBytes(session);
+
+    // Progress engine starts from already-transferred bytes
     const progress = new ProgressEngine({
       totalBytes: session.file.size,
       sessionId: session.id,
@@ -180,20 +411,22 @@ export class UploadEngine {
       onProgress: (snap) =>
         this._bus.emit({ type: "progress", progress: snap }),
     });
+    // Pre-confirm already done bytes so the progress bar doesn't reset
     progress.start();
+    if (alreadyTransferred > 0) {
+      progress.confirmBytes(alreadyTransferred);
+    }
 
-    // ----- 5. Open the chunk reader --------------------------------------------
     const reader = this._readerFactory(session.file);
-
-    // ----- 6. Schedule all chunks ---------------------------------------------
     const scheduler = new Scheduler(this._config.concurrency.initial);
-    this._scheduler = scheduler;
-    this._activeSession = session;
-    let cancelled = false;
+
+    this._activeUploads.set(session.id, { scheduler, session });
     let fatalCount = 0;
 
+    const isCancelled = () => this._cancelFlags.has(session.id);
+
     const uploadChunkTask = (chunk: ChunkMeta) => async (): Promise<void> => {
-      if (cancelled) return;
+      if (isCancelled()) return;
 
       this._bus.emit({ type: "chunk:started", session, chunk });
       chunk.status = "uploading";
@@ -202,7 +435,7 @@ export class UploadEngine {
       try {
         await withRetry(
           async () => {
-            if (cancelled) return;
+            if (isCancelled()) return;
             const data = await reader.read(chunk.offset, chunk.size);
             const sha256Hex = crypto
               .createHash("sha256")
@@ -223,6 +456,7 @@ export class UploadEngine {
             policy: this._config.retry,
             onRetryableFailure: (c, error, attempt) => {
               c.status = "failed";
+              c.retries++;
               c.lastError = error.message;
               c.lastFailedAt = Date.now();
               this._bus.emit({
@@ -236,7 +470,6 @@ export class UploadEngine {
           },
         );
       } catch (err) {
-        // withRetry threw — chunk is fatally exhausted.
         chunk.status = "fatal";
         chunk.lastError = err instanceof Error ? err.message : String(err);
         chunk.lastFailedAt = Date.now();
@@ -247,11 +480,12 @@ export class UploadEngine {
         return;
       }
 
-      if (cancelled) return;
+      if (isCancelled()) return;
 
-      // Success path
       chunk.status = "done";
-      session.transferredBytes += chunk.size;
+      chunk.attempts++;
+      // Recompute from source-of-truth rather than accumulating
+      session.transferredBytes = getTransferredBytes(session);
       progress.confirmBytes(chunk.size);
       this._bus.emit({ type: "chunk:done", session, chunk });
       await this._store.save(session);
@@ -261,23 +495,21 @@ export class UploadEngine {
       scheduler.push(uploadChunkTask(chunk));
     }
 
-    // Wait for all tasks to complete
     await scheduler.drain();
     progress.stop();
     await reader.close();
-    this._scheduler = null;
-    this._activeSession = null;
+    this._activeUploads.delete(session.id);
 
-    // ----- 7. Reconcile -------------------------------------------------------
-    if (cancelled || session.state === "cancelled") {
+    // ── Post-drain reconciliation ─────────────────────────────────────────
+    if (isCancelled() || session.state === "cancelled") {
+      this._cancelFlags.delete(session.id);
       if (session.state !== "cancelled") {
         transitionSession(session, "cancelled");
         session.updatedAt = Date.now();
       }
       this._bus.emit({ type: "session:cancelled", session });
       await this._store.save(session);
-      // Best-effort abort on provider
-      await this._adapter.abortTransfer(session);
+      await this._adapter.abortTransfer(session).catch(() => undefined);
       return session;
     }
 
@@ -289,12 +521,17 @@ export class UploadEngine {
       );
       this._bus.emit({ type: "session:failed", session, error });
       await this._store.save(session);
-      // Best-effort abort
-      await this._adapter.abortTransfer(session);
+      await this._adapter.abortTransfer(session).catch(() => undefined);
       return session;
     }
 
-    // ----- 8. Complete the transfer -------------------------------------------
+    return this._complete(session);
+  }
+
+  /**
+   * Finalize the upload by calling adapter.completeTransfer().
+   */
+  private async _complete(session: TransferSession): Promise<TransferSession> {
     try {
       await this._adapter.completeTransfer(session, session.chunks);
     } catch (err) {
@@ -303,7 +540,7 @@ export class UploadEngine {
       const error = err instanceof Error ? err : new Error(String(err));
       this._bus.emit({ type: "session:failed", session, error });
       await this._store.save(session);
-      await this._adapter.abortTransfer(session);
+      await this._adapter.abortTransfer(session).catch(() => undefined);
       return session;
     }
 
@@ -312,29 +549,6 @@ export class UploadEngine {
     this._bus.emit({ type: "session:done", session });
     await this._store.save(session);
     return session;
-  }
-
-  /**
-   * Pause active chunk scheduling.
-   * In-flight tasks complete; no new tasks are dispatched until resume().
-   * No-op if no upload is currently active.
-   */
-  pause(): void {
-    if (!this._scheduler || !this._activeSession) return;
-    this._scheduler.pause();
-    transitionSession(this._activeSession, "paused");
-    this._bus.emit({ type: "session:paused", session: this._activeSession });
-  }
-
-  /**
-   * Resume a paused session.
-   * No-op if no upload is currently active.
-   */
-  resume(): void {
-    if (!this._scheduler || !this._activeSession) return;
-    transitionSession(this._activeSession, "running");
-    this._scheduler.resume();
-    this._bus.emit({ type: "session:resumed", session: this._activeSession });
   }
 }
 

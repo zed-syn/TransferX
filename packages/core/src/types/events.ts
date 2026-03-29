@@ -36,6 +36,7 @@ export type TransferEvent =
   | { type: "session:started"; session: TransferSession }
   | { type: "session:paused"; session: TransferSession }
   | { type: "session:resumed"; session: TransferSession }
+  | { type: "session:reconciling"; session: TransferSession }
   | { type: "session:done"; session: TransferSession }
   | { type: "session:failed"; session: TransferSession; error: Error }
   | { type: "session:cancelled"; session: TransferSession }

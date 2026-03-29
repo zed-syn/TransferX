@@ -4,6 +4,7 @@
     "rootDir": "src",
     "outDir": "dist",
     "declarationDir": "dist",
+    "ignoreDeprecations": "5.0",
     "paths": {}
   },
   "include": ["src/**/*.ts"]

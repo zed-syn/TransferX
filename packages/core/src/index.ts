@@ -47,6 +47,11 @@ export {
   authError,
   checksumError,
   cancelledError,
+  invalidStateError,
+  sessionNotFoundError,
+  fileChangedError,
+  zeroByteError,
+  concurrentUploadError,
 } from "./types/errors.js";
 
 // Chunker
@@ -75,6 +80,7 @@ export { FileSessionStore } from "./store/FileSessionStore.js";
 export type {
   ITransferAdapter,
   ChunkUploadResult,
+  RemoteUploadState,
 } from "./adapter/ITransferAdapter.js";
 
 // EventBus

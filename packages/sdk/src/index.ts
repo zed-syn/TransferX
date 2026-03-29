@@ -80,8 +80,18 @@ export interface CreateB2EngineOptions {
  * Result of createB2Engine — a wired-up engine ready to call upload().
  */
 export interface B2Engine {
-  /** The upload engine instance. Call engine.upload(session) to start. */
+  /** Upload a new session from scratch. */
   upload: UploadEngine["upload"];
+  /** Resume a persisted session (crash recovery or explicit pause). */
+  resumeSession: UploadEngine["resumeSession"];
+  /** Pause an active in-process upload. */
+  pause: UploadEngine["pause"];
+  /** Resume an in-process paused scheduler (use resumeSession for crash recovery). */
+  resumeScheduler: UploadEngine["resumeScheduler"];
+  /** Cancel and abort a session (in-flight or persisted). */
+  cancel: UploadEngine["cancel"];
+  /** Get the current persisted state of a session. */
+  getSession: UploadEngine["getSession"];
   /** Public event bus — subscribe here for progress, lifecycle events. */
   bus: EventBus;
   /** The resolved config (with defaults filled in). */
@@ -111,6 +121,11 @@ export function createB2Engine(opts: CreateB2EngineOptions): B2Engine {
 
   return {
     upload: engine.upload.bind(engine),
+    resumeSession: engine.resumeSession.bind(engine),
+    pause: engine.pause.bind(engine),
+    resumeScheduler: engine.resumeScheduler.bind(engine),
+    cancel: engine.cancel.bind(engine),
+    getSession: engine.getSession.bind(engine),
     bus,
     config,
     store,

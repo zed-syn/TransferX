@@ -725,10 +725,11 @@ pnpm add @transferx/sdk</code></pre>
 
         <div class="callout tip">
           <strong>Resuming</strong>
-          Sessions in <code>paused</code> or <code>failed</code> state can be
-          passed back to <code>engine.upload()</code>. The engine will skip
-          chunks that are already in <code>done</code> state and only upload the
-          remaining ones.
+          Sessions in <code>paused</code>, <code>failed</code>, or
+          <code>running</code> (crash recovery) state can be resumed with
+          <code>engine.resumeSession(sessionId)</code>. The engine reconciles
+          remote provider state, then re-uploads only the chunks that still need
+          uploading.
         </div>
       </section>
 
@@ -867,12 +868,17 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
             <tr>
               <td><code>session:paused</code></td>
               <td><code>session</code></td>
-              <td><code>engine.pause()</code> called</td>
+              <td><code>engine.pause(id)</code> called</td>
             </tr>
             <tr>
               <td><code>session:resumed</code></td>
               <td><code>session</code></td>
-              <td><code>engine.resume()</code> called</td>
+              <td><code>engine.resumeScheduler(id)</code> called</td>
+            </tr>
+            <tr>
+              <td><code>session:reconciling</code></td>
+              <td><code>session</code></td>
+              <td>Resume started; verifying remote provider state</td>
             </tr>
             <tr>
               <td><code>session:done</code></td>
@@ -1074,9 +1080,12 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
 <span class="pn">});</span>
 
 <span class="cm">// Methods</span>
-<span class="kw">await</span> <span class="pr">engine</span><span class="pn">.</span><span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>  <span class="cm">// returns final TransferSession</span>
-<span class="pr">engine</span><span class="pn">.</span><span class="fn">pause</span><span class="pn">();</span>
-<span class="pr">engine</span><span class="pn">.</span><span class="fn">resume</span><span class="pn">();</span></code></pre>
+<span class="kw">await</span> <span class="pr">engine</span><span class="pn">.</span><span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>         <span class="cm">// upload from scratch — returns final TransferSession</span>
+<span class="kw">await</span> <span class="pr">engine</span><span class="pn">.</span><span class="fn">resumeSession</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">);</span>  <span class="cm">// crash recovery — reconcile + re-upload pending chunks</span>
+<span class="pr">engine</span><span class="pn">.</span><span class="fn">pause</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">);</span>              <span class="cm">// pause in-process scheduler</span>
+<span class="pr">engine</span><span class="pn">.</span><span class="fn">resumeScheduler</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">);</span>    <span class="cm">// resume in-process scheduler</span>
+<span class="kw">await</span> <span class="pr">engine</span><span class="pn">.</span><span class="fn">cancel</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">);</span>        <span class="cm">// cancel active or persisted session</span>
+<span class="kw">await</span> <span class="pr">engine</span><span class="pn">.</span><span class="fn">getSession</span><span class="pn">(</span><span class="pr">sessionId</span><span class="pn">);</span>    <span class="cm">// load session (null if not found)</span></code></pre>
       </section>
 
       <!-- ── API: EventBus ── -->
@@ -1376,20 +1385,23 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
 <span class="kw">import</span> <span class="pn">{</span> <span class="fn">createB2Engine</span><span class="pn">,</span> <span class="ty">FileSessionStore</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/sdk'</span><span class="pn">;</span>
 
 <span class="kw">const</span> <span class="pr">store</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">FileSessionStore</span><span class="pn">(</span><span class="str">'./.transferx-sessions'</span><span class="pn">);</span>
-<span class="kw">const</span> <span class="pn">{</span> <span class="pr">upload</span> <span class="pn">}</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span> <span class="pr">b2</span><span class="pn">: {</span> <span class="cm">/* ... */</span> <span class="pn">},</span> <span class="pr">store</span> <span class="pn">});</span>
+<span class="kw">const</span> <span class="pn">{</span> <span class="pr">upload</span><span class="pn">,</span> <span class="pr">resumeSession</span> <span class="pn">}</span> <span class="op">=</span> <span class="fn">createB2Engine</span><span class="pn">({</span> <span class="pr">b2</span><span class="pn">: {</span> <span class="cm">/* ... */</span> <span class="pn">},</span> <span class="pr">store</span> <span class="pn">});</span>
 
 <span class="cm">// Resume any incomplete sessions from a previous run</span>
 <span class="kw">const</span> <span class="pr">sessions</span> <span class="op">=</span> <span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">listAll</span><span class="pn">();</span>
 <span class="kw">await</span> <span class="ty">Promise</span><span class="pn">.</span><span class="fn">allSettled</span><span class="pn">(</span>
   <span class="pr">sessions</span>
-    <span class="pn">.</span><span class="fn">filter</span><span class="pn">(</span><span class="pr">s</span> <span class="op">=></span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'paused'</span> <span class="op">||</span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'failed'</span><span class="pn">)</span>
-    <span class="pn">.</span><span class="fn">map</span><span class="pn">(</span><span class="pr">s</span> <span class="op">=></span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">s</span><span class="pn">))</span>
+    <span class="pn">.</span><span class="fn">filter</span><span class="pn">(</span><span class="pr">s</span> <span class="op">=></span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'paused'</span> <span class="op">||</span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'failed'</span> <span class="op">||</span> <span class="pr">s</span><span class="pn">.</span><span class="pr">state</span> <span class="op">===</span> <span class="str">'running'</span><span class="pn">)</span>
+    <span class="pn">.</span><span class="fn">map</span><span class="pn">(</span><span class="pr">s</span> <span class="op">=></span> <span class="fn">resumeSession</span><span class="pn">(</span><span class="pr">s</span><span class="pn">.</span><span class="pr">id</span><span class="pn">))</span>
 <span class="pn">);</span></code></pre>
 
         <div class="callout tip">
-          <strong>Chunk-level resume</strong>
-          Chunks that are already in <code>done</code> state are skipped
-          automatically — only pending and failed chunks are re-uploaded.
+          <strong>Chunk-level resume with reconciliation</strong>
+          <code>resumeSession()</code> queries the provider for already-uploaded
+          parts (if the adapter supports <code>getRemoteState()</code>), marks
+          confirmed chunks as done, and re-uploads only what remains. Orphaned
+          in-flight chunks (state <code>uploading</code> at crash time) are
+          automatically reset to <code>pending</code>.
         </div>
       </section>
 

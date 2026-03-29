@@ -16,6 +16,11 @@ export type ErrorCategory =
   | "auth" // 401/403 → NOT retryable without token refresh
   | "checksum" // local data integrity failure → retryable (re-read chunk)
   | "cancelled" // user-initiated → NOT retryable
+  | "invalidState" // operation not allowed in current state → NOT retryable
+  | "sessionNotFound" // session not in store → NOT retryable
+  | "fileChanged" // source file changed since session created → NOT retryable
+  | "zeroByte" // empty file can't use multipart upload → NOT retryable
+  | "concurrentUpload" // engine already running this session → NOT retryable
   | "fatal" // unrecoverable state → NOT retryable
   | "unknown"; // catch-all → retryable (be conservative)
 
@@ -111,6 +116,57 @@ export function cancelledError(sessionId: string): TransferError {
   return new TransferError(
     `Transfer cancelled`,
     "cancelled",
+    undefined,
+    undefined,
+    sessionId,
+  );
+}
+
+export function invalidStateError(
+  sessionId: string,
+  current: string,
+  operation: string,
+): TransferError {
+  return new TransferError(
+    `Cannot ${operation}: session '${sessionId}' is in state '${current}'`,
+    "invalidState",
+    undefined,
+    undefined,
+    sessionId,
+  );
+}
+
+export function sessionNotFoundError(sessionId: string): TransferError {
+  return new TransferError(
+    `Session '${sessionId}' not found in store`,
+    "sessionNotFound",
+    undefined,
+    undefined,
+    sessionId,
+  );
+}
+
+export function fileChangedError(sessionId: string): TransferError {
+  return new TransferError(
+    `Source file has changed since session '${sessionId}' was created — cannot resume`,
+    "fileChanged",
+    undefined,
+    undefined,
+    sessionId,
+  );
+}
+
+export function zeroByteError(): TransferError {
+  return new TransferError(
+    "Cannot start a multipart upload for a zero-byte file",
+    "zeroByte",
+  );
+}
+
+export function concurrentUploadError(sessionId: string): TransferError {
+  return new TransferError(
+    `Session '${sessionId}' is already being uploaded by this engine`,
+    "concurrentUpload",
     undefined,
     undefined,
     sessionId,

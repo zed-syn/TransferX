@@ -40,7 +40,11 @@ import {
   clientError,
   authError,
 } from "@transferx/core";
-import type { ITransferAdapter, ChunkUploadResult } from "@transferx/core";
+import type {
+  ITransferAdapter,
+  ChunkUploadResult,
+  RemoteUploadState,
+} from "@transferx/core";
 import type { TransferSession } from "@transferx/core";
 import type { ChunkMeta } from "@transferx/core";
 
@@ -64,6 +68,14 @@ interface B2GetUploadPartUrlResponse {
 
 interface B2UploadPartResponse {
   contentSha1: string;
+}
+
+interface B2ListPartsResponse {
+  parts: Array<{
+    partNumber: number;
+    contentSha1: string;
+  }>;
+  nextPartNumberMarker?: number;
 }
 
 // ── Adapter ───────────────────────────────────────────────────────────────────
@@ -187,6 +199,44 @@ export class B2Adapter implements ITransferAdapter {
     } catch {
       // Best-effort — swallow errors so cancel never blocks the engine
     }
+  }
+
+  async getRemoteState(session: TransferSession): Promise<RemoteUploadState> {
+    if (!session.providerSessionId) {
+      return { uploadedParts: [] };
+    }
+
+    const auth = await this._ensureAuth();
+    const uploadedParts: RemoteUploadState["uploadedParts"] = [];
+
+    // B2 paginates parts — iterate until no nextPartNumberMarker
+    let startPartNumber: number | undefined;
+    do {
+      const body: Record<string, unknown> = {
+        fileId: session.providerSessionId,
+        maxPartCount: 1000,
+      };
+      if (startPartNumber !== undefined) {
+        body["startPartNumber"] = startPartNumber;
+      }
+
+      const resp = await this._post<B2ListPartsResponse>(
+        `${auth.apiUrl}/b2api/v3/b2_list_parts`,
+        auth.authorizationToken,
+        body,
+      );
+
+      for (const p of resp.parts) {
+        uploadedParts.push({
+          partNumber: p.partNumber,
+          providerToken: p.contentSha1,
+        });
+      }
+
+      startPartNumber = resp.nextPartNumberMarker;
+    } while (startPartNumber !== undefined);
+
+    return { uploadedParts };
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
