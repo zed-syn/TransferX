@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-03-30
+
+### Added — `@transferx/downloader`
+- **Byte-level sub-chunk resume** (`DownloadEngine`): on retry the engine reads
+  `chunk.bytesWritten` and rounds it down to the nearest 1 MiB boundary
+  (`RESUME_GRANULARITY`). The `Range` header and write-offset are both adjusted
+  so only the un-confirmed bytes are re-downloaded. Idempotent pwrite semantics
+  make the overlap safe.
+- **True pre-allocation** (`FileWriter`): replaced the single-byte stamp with
+  `fs.ftruncate(fd, fileSize)` so the full file extent is reserved immediately
+  after open, eliminating fragmentation on most file-systems.
+- **Per-chunk fdatasync** (`FileWriter.syncOnChunkComplete`): new method that
+  flushes the kernel write-back cache every N completed chunks, bounding
+  power-loss data loss to `fsyncIntervalChunks × chunkSize`. Default N = 8.
+- **Write-coalescing buffer pool** (`BufferPool`): free-list of up to 64 ×
+  256 KiB buffers. `FileWriter.writeStream` accepts an optional `BufferPool`
+  and accumulates small stream frames into a single large write, reducing GC
+  pressure and syscall count.
+- **Throughput-aware concurrency** (`ChunkScheduler.addThroughputSample`):
+  scale-up is now gated on a ≥5 % improvement in the 10-sample rolling median
+  throughput versus the level at the last scale-up. Error-rate scale-down
+  remains unchanged.
+- **`DownloadManager`**: FIFO queue with `maxConcurrentDownloads` cap (default
+  3). API: `enqueue`, `cancelAll`, `pauseAll`, `resumeAll`, `getStatus`.
+  Exposes `ManagedDownload`, `DownloadManagerOptions`, `DownloadManagerStatus`
+  types.
+- **`DownloadMetrics`**: passive event-driven metrics collector mirroring the
+  upload `MetricsEngine`. Tracks `bytesDownloaded`, `chunksCompleted`,
+  `chunksFailed`, `retryCount`, `errorRate`, `avgChunkLatencyMs`,
+  `peakSpeedBytesPerSec`, `currentSpeedBytesPerSec`. API: `attach`, `detach`,
+  `getSnapshot`, `getAllSnapshots`, `getAggregate`, `reset`.
+- **`fsyncIntervalChunks`** field added to `DownloadConfig` (default 8).
+
+### Fixed — `@transferx/downloader`
+- **`RangePlanner.rehydrate`**: previously reset `bytesWritten` to 0 for every
+  `pending` / `failed` chunk, discarding partial write progress. Now preserves
+  `bytesWritten` so the byte-level resume path gets correct data.
+
+### Added — `@transferx/sdk`
+- Re-exports `DownloadManager`, `DownloadMetrics` and all associated types so
+  SDK consumers get the full download feature set without importing the
+  lower-level package directly.
+
+### Tests
+- 17 new tests added across 6 new suites: byte-level sub-chunk resume, FileWriter
+  pre-allocation / fdatasync, DownloadManager, DownloadMetrics, ChunkScheduler
+  throughput signal. Total test count: 302 (up from 285).
+
+---
+
 ## [1.1.0] — 2026-03-29
 
 ### Fixed (Phase 0 — Audit Blockers)

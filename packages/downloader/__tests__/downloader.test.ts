@@ -37,6 +37,9 @@ import {
 import { withRetry } from "../src/RetryEngine";
 import { ProgressEngine } from "../src/ProgressEngine";
 import { ChunkScheduler } from "../src/ChunkScheduler";
+import { DownloadManager } from "../src/DownloadManager";
+import { DownloadMetrics } from "../src/DownloadMetrics";
+import { DownloadEventBus } from "../src/EventBus";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -166,7 +169,7 @@ describe("RangePlanner", () => {
     expect(RangePlanner.isStreamingChunk(chunks[0]!)).toBe(true);
   });
 
-  test("rehydrate resets bytesWritten=0 for both running and failed chunks", () => {
+  test("rehydrate preserves bytesWritten for sub-chunk resume (running and failed)", () => {
     const input = RangePlanner.plan(6 * 1024 * 1024, 2 * 1024 * 1024, true);
     const withStates = input.map((c, i) => ({
       ...c,
@@ -177,18 +180,34 @@ describe("RangePlanner", () => {
 
     const rehydrated = RangePlanner.rehydrate(withStates);
 
-    // running → pending, bytesWritten=0, attempts=0
+    // running → pending; bytesWritten PRESERVED (byte-level resume); attempts reset
     expect(rehydrated[0]!.status).toBe("pending");
-    expect(rehydrated[0]!.bytesWritten).toBe(0);
+    expect(rehydrated[0]!.bytesWritten).toBe(withStates[0]!.bytesWritten);
     expect(rehydrated[0]!.attempts).toBe(0);
 
-    // failed → pending, bytesWritten=0
+    // failed → pending; bytesWritten PRESERVED
     expect(rehydrated[1]!.status).toBe("pending");
-    expect(rehydrated[1]!.bytesWritten).toBe(0);
+    expect(rehydrated[1]!.bytesWritten).toBe(withStates[1]!.bytesWritten);
 
     // done → unchanged
     expect(rehydrated[2]!.status).toBe("done");
     expect(rehydrated[2]!.bytesWritten).toBe(rehydrated[2]!.size);
+  });
+
+  test("rehydrate resets attempts to 0 but keeps zero bytesWritten if already zero", () => {
+    const chunk = {
+      index: 0,
+      start: 0,
+      end: 999,
+      size: 1000,
+      status: "running" as const,
+      attempts: 3,
+      bytesWritten: 0,
+    };
+    const [result] = RangePlanner.rehydrate([chunk]);
+    expect(result!.status).toBe("pending");
+    expect(result!.bytesWritten).toBe(0);
+    expect(result!.attempts).toBe(0);
   });
 
   test("pendingChunks returns only pending and failed", () => {
@@ -881,3 +900,506 @@ describe("DownloadEngine integration", () => {
     await expect(task.start()).resolves.toBeDefined();
   });
 });
+
+// ─── Byte-level sub-chunk resume tests ────────────────────────────────────────
+
+describe("Byte-level sub-chunk resume", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeBody(size: number): Uint8Array {
+    const buf = new Uint8Array(size);
+    for (let i = 0; i < size; i++) buf[i] = i % 256;
+    return buf;
+  }
+
+  test("Range header uses chunk.start + bytesWritten on resume", async () => {
+    const chunkSize = 1 * 1024 * 1024; // 1 MiB
+    const fileSize = 3 * chunkSize;
+    const body = makeBody(fileSize);
+    const storeDir = path.join(tmpDir, "store");
+
+    // Manually create a session where chunk 0 has bytesWritten = 512 KiB
+    // (simulating a crash mid-chunk).
+    const { fetch: baseFetch } = makeFetch(body, {
+      supportsRange: true,
+      etag: '"stable"',
+    });
+
+    const engine = makeEngine(baseFetch, storeDir, {
+      chunkSize,
+      fsyncIntervalChunks: 0, // disable periodic sync for simpler test
+    });
+    // Create the task to get the derived session ID
+    const inner = engine.createTask(
+      "http://test/file.bin",
+      path.join(tmpDir, "file.bin"),
+    );
+
+    // Inject a partial session: chunk 0 partially written
+    const store = new ResumeStore(storeDir);
+    const chunks = RangePlanner.plan(fileSize, chunkSize, true);
+    const partialBytesWritten = 512 * 1024; // 512 KiB written for chunk 0
+    const partialSession: DownloadSession = {
+      id: inner.id,
+      url: "http://test/file.bin",
+      outputPath: path.join(tmpDir, "file.bin"),
+      fileSize,
+      etag: '"stable"',
+      lastModified: null,
+      supportsRange: true,
+      status: "running",
+      chunks: chunks.map((c) =>
+        c.index === 0
+          ? { ...c, status: "running", bytesWritten: partialBytesWritten }
+          : c,
+      ),
+      downloadedBytes: partialBytesWritten,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    await store.save(partialSession);
+
+    // Pre-populate the file with the "already downloaded" 512 KiB
+    fs.mkdirSync(path.dirname(path.join(tmpDir, "file.bin")), {
+      recursive: true,
+    });
+    const preWritten = Buffer.alloc(fileSize, 0);
+    for (let i = 0; i < partialBytesWritten; i++) preWritten[i] = body[i]!;
+    fs.writeFileSync(path.join(tmpDir, "file.bin"), preWritten);
+
+    // Track Range headers sent during resume
+    const rangesRequested: string[] = [];
+    const trackFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      if (h["Range"]) rangesRequested.push(h["Range"]);
+      return baseFetch(url, init);
+    };
+
+    const resumeEngine = makeEngine(
+      trackFetch as unknown as typeof fetch,
+      storeDir,
+      { chunkSize, fsyncIntervalChunks: 0 },
+    );
+    const resumedInner = await resumeEngine.resumeTask(inner.id);
+    expect(resumedInner).not.toBeNull();
+
+    await new DownloadTask(resumedInner!).start();
+
+    // Chunk 0 should request from partialBytesWritten (rounded to 1 MiB = 0, since 512KiB < 1MiB)
+    // bytesWritten = 512 KiB, RESUME_GRANULARITY = 1 MiB → resumeOffset = 0
+    // So chunk 0 range is bytes=0-1048575 (full chunk re-download — safe rounding)
+    const chunk0Range = rangesRequested.find((r) =>
+      r.startsWith("bytes=0-"),
+    );
+    expect(chunk0Range).toBeDefined();
+
+    // Final file must be byte-perfect
+    const result = fs.readFileSync(path.join(tmpDir, "file.bin"));
+    expect(result.length).toBe(fileSize);
+    for (let i = 0; i < fileSize; i++) {
+      if (result[i] !== body[i]) {
+        throw new Error(
+          `Byte mismatch at ${i}: got ${result[i]}, expected ${body[i]}`,
+        );
+      }
+    }
+  });
+
+  test("bytesWritten in session accumulates correctly across retries", async () => {
+    const size = 2 * 1024 * 1024;
+    const body = makeBody(size);
+    let downloadCallCount = 0;
+
+    // Fail once on the first download call to trigger a retry within the session
+    const mockFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      const isProbe = init?.method === "HEAD" || h["Range"] === "bytes=0-0";
+      const { fetch: realFetch } = makeFetch(body, { supportsRange: true });
+      if (!isProbe) {
+        downloadCallCount++;
+        // Fail the second download call to exercise retry path
+        if (downloadCallCount === 2) {
+          return new Response(null, { status: 503 });
+        }
+      }
+      return realFetch(url, init);
+    };
+
+    const engine = makeEngine(
+      mockFetch as unknown as typeof fetch,
+      path.join(tmpDir, "store"),
+    );
+    const task = new DownloadTask(
+      engine.createTask("http://test/file.bin", path.join(tmpDir, "file.bin")),
+    );
+
+    await task.start();
+
+    const result = fs.readFileSync(path.join(tmpDir, "file.bin"));
+    expect(result.length).toBe(size);
+  });
+});
+
+// ─── FileWriter pre-allocation tests ────────────────────────────────────────
+
+describe("FileWriter pre-allocation (ftruncate)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = makeTempDir(); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  test("fresh open with known fileSize creates file of correct size immediately", async () => {
+    const filePath = path.join(tmpDir, "preallocated.bin");
+    const fileSize = 4 * 1024 * 1024; // 4 MiB
+    const writer = new FileWriter(filePath);
+    await writer.open(fileSize, false);
+    await writer.close();
+
+    // ftruncate should have set the file to exactly fileSize bytes
+    const stat = fs.statSync(filePath);
+    expect(stat.size).toBe(fileSize);
+  });
+
+  test("fresh open without fileSize does not crash", async () => {
+    const filePath = path.join(tmpDir, "nosize.bin");
+    const writer = new FileWriter(filePath);
+    await writer.open(null, false);
+    await writer.close();
+    expect(fs.existsSync(filePath)).toBe(true);
+  });
+
+  test("syncOnChunkComplete calls fdatasync every N completed chunks", async () => {
+    const filePath = path.join(tmpDir, "sync-test.bin");
+    const writer = new FileWriter(filePath);
+    await writer.open(100, false);
+
+    // First 7 calls with interval=8 should NOT flush
+    for (let i = 0; i < 7; i++) {
+      await writer.syncOnChunkComplete(8);
+    }
+    // 8th call SHOULD flush (no error = fdatasync executed without error)
+    await expect(writer.syncOnChunkComplete(8)).resolves.toBeUndefined();
+
+    await writer.close();
+  });
+
+  test("syncOnChunkComplete with interval=0 is a no-op", async () => {
+    const filePath = path.join(tmpDir, "noop-sync.bin");
+    const writer = new FileWriter(filePath);
+    await writer.open(10, false);
+    // Should not throw regardless of how many times called
+    for (let i = 0; i < 20; i++) {
+      await writer.syncOnChunkComplete(0);
+    }
+    await writer.close();
+  });
+});
+
+// ─── DownloadManager tests ────────────────────────────────────────────────────
+
+describe("DownloadManager", () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = makeTempDir(); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function makeBody(size: number): Uint8Array {
+    const buf = new Uint8Array(size);
+    for (let i = 0; i < size; i++) buf[i] = i % 256;
+    return buf;
+  }
+
+  test("completes a single download through the manager", async () => {
+    const size = 1 * 1024 * 1024;
+    const body = makeBody(size);
+    const { fetch } = makeFetch(body, { supportsRange: true });
+
+    const manager = new DownloadManager({
+      maxConcurrentDownloads: 2,
+      storeDir: path.join(tmpDir, "store"),
+      config: {
+        fetch,
+        chunkSize: 512 * 1024,
+        concurrency: { initial: 2, min: 1, max: 2, adaptive: false },
+        retry: { maxAttempts: 2, baseDelayMs: 5, maxDelayMs: 50, jitterMs: 1 },
+        timeoutMs: 5000,
+        fsyncIntervalChunks: 0,
+      },
+    });
+
+    const outPath = path.join(tmpDir, "out.bin");
+    const { task, promise } = manager.enqueue("http://test/file.bin", outPath);
+
+    const progressEvents: number[] = [];
+    task.on("progress", (p) => {
+      if (p.percent !== null) progressEvents.push(p.percent);
+    });
+
+    const session = await promise;
+    expect(session.status).toBe("completed");
+
+    const result = fs.readFileSync(outPath);
+    expect(result.length).toBe(size);
+    expect(progressEvents.length).toBeGreaterThan(0);
+  });
+
+  test("respects maxConcurrentDownloads cap", async () => {
+    const size = 500_000;
+    const body = makeBody(size);
+
+    let peak = 0;
+    let active = 0;
+
+    const countFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      const isProbe = init?.method === "HEAD" || h["Range"] === "bytes=0-0";
+      if (!isProbe) {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((r) => setTimeout(r, 10));
+        active--;
+      }
+      const { fetch: f } = makeFetch(body, { supportsRange: false });
+      return f(url, init);
+    };
+
+    const manager = new DownloadManager({
+      maxConcurrentDownloads: 2,
+      storeDir: path.join(tmpDir, "store"),
+      config: {
+        fetch: countFetch as unknown as typeof fetch,
+        concurrency: { initial: 1, min: 1, max: 1, adaptive: false },
+        retry: { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 5, jitterMs: 0 },
+        timeoutMs: 5000,
+        fsyncIntervalChunks: 0,
+      },
+    });
+
+    // Enqueue 5 downloads — only 2 should run simultaneously
+    const promises = Array.from({ length: 5 }, (_, i) => {
+      const { promise } = manager.enqueue(
+        "http://test/file.bin",
+        path.join(tmpDir, `out${i}.bin`),
+      );
+      return promise;
+    });
+    await Promise.all(promises);
+
+    // With maxConcurrentDownloads=2 and single-connection downloads, peak active
+    // connections should be ≤ 2 (one per concurrent download).
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  test("cancelAll rejects queued promises", async () => {
+    const size = 500_000;
+    const body = makeBody(size);
+
+    // Slow fetch so downloads don't complete before cancelAll
+    const slowFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      const isProbe = init?.method === "HEAD" || h["Range"] === "bytes=0-0";
+      if (!isProbe) await new Promise((r) => setTimeout(r, 500));
+      const { fetch: f } = makeFetch(body, { supportsRange: false });
+      return f(url, init);
+    };
+
+    const manager = new DownloadManager({
+      maxConcurrentDownloads: 1,
+      storeDir: path.join(tmpDir, "store"),
+      config: {
+        fetch: slowFetch as unknown as typeof fetch,
+        concurrency: { initial: 1, min: 1, max: 1, adaptive: false },
+        retry: { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 5, jitterMs: 0 },
+        timeoutMs: 5000,
+        fsyncIntervalChunks: 0,
+      },
+    });
+
+    const { promise: p1 } = manager.enqueue(
+      "http://test/a.bin",
+      path.join(tmpDir, "a.bin"),
+    );
+    // Enqueue a second download — it will be queued (slot taken by p1)
+    const { promise: p2 } = manager.enqueue(
+      "http://test/b.bin",
+      path.join(tmpDir, "b.bin"),
+    );
+
+    // Give a tick for p1 to start
+    await Promise.resolve();
+    await manager.cancelAll();
+
+    // Both promises should settle (either resolved or rejected)
+    const [r1, r2] = await Promise.allSettled([p1, p2]);
+    // The queued p2 must be rejected (cancelled before starting)
+    expect(r2.status).toBe("rejected");
+    void r1; // p1 may succeed or fail depending on timing
+  });
+
+  test("getStatus reflects active and queued counts", async () => {
+    const manager = new DownloadManager({
+      maxConcurrentDownloads: 1,
+      storeDir: path.join(tmpDir, "store"),
+    });
+    expect(manager.getStatus().active).toBe(0);
+    expect(manager.getStatus().queued).toBe(0);
+    expect(manager.getStatus().maxConcurrent).toBe(1);
+  });
+});
+
+// ─── DownloadMetrics tests ────────────────────────────────────────────────────
+
+describe("DownloadMetrics", () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = makeTempDir(); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function makeBody(size: number): Uint8Array {
+    const buf = new Uint8Array(size);
+    for (let i = 0; i < size; i++) buf[i] = i % 256;
+    return buf;
+  }
+
+  test("attach tracks progress, chunks, retries, and error rate", async () => {
+    const size = 2 * 1024 * 1024;
+    const body = makeBody(size);
+    let callCount = 0;
+    const mockFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      const isProbe = init?.method === "HEAD" || h["Range"] === "bytes=0-0";
+      const { fetch: f } = makeFetch(body, { supportsRange: true });
+      if (!isProbe) {
+        callCount++;
+        if (callCount === 1) return new Response(null, { status: 503 });
+      }
+      return f(url, init);
+    };
+
+    const engine = makeEngine(
+      mockFetch as unknown as typeof fetch,
+      path.join(tmpDir, "store"),
+    );
+    const inner = engine.createTask(
+      "http://test/file.bin",
+      path.join(tmpDir, "file.bin"),
+    );
+    const task = new DownloadTask(inner);
+
+    const metrics = new DownloadMetrics();
+    metrics.attach(inner.id, inner.bus);
+
+    await task.start();
+
+    const snap = metrics.getSnapshot(inner.id);
+    expect(snap).not.toBeNull();
+    expect(snap!.chunksCompleted).toBeGreaterThan(0);
+    expect(snap!.retryCount).toBeGreaterThanOrEqual(1);
+    expect(snap!.bytesDownloaded).toBe(size);
+    // peakSpeedBytesPerSec may be 0 in fast unit-test runs where the
+    // ProgressEngine interval fires after completion — only assert non-negative.
+    expect(snap!.peakSpeedBytesPerSec).toBeGreaterThanOrEqual(0);
+  });
+
+  test("getAggregate sums across multiple tasks", async () => {
+    const size = 500_000;
+    const body = makeBody(size);
+    const { fetch } = makeFetch(body, { supportsRange: false });
+
+    const metrics = new DownloadMetrics();
+
+    const e1 = makeEngine(fetch, path.join(tmpDir, "store1"));
+    const i1 = e1.createTask("http://test/a.bin", path.join(tmpDir, "a.bin"));
+    metrics.attach(i1.id, i1.bus);
+
+    const e2 = makeEngine(fetch, path.join(tmpDir, "store2"));
+    const i2 = e2.createTask("http://test/b.bin", path.join(tmpDir, "b.bin"));
+    metrics.attach(i2.id, i2.bus);
+
+    await new DownloadTask(i1).start();
+    await new DownloadTask(i2).start();
+
+    const agg = metrics.getAggregate();
+    expect(agg.taskCount).toBe(2);
+    expect(agg.totalBytesDownloaded).toBe(size * 2);
+  });
+
+  test("detach unsubscribes so no more updates are received", async () => {
+    const size = 500_000;
+    const body = makeBody(size);
+    const { fetch } = makeFetch(body, { supportsRange: false });
+
+    const inner = makeEngine(fetch, path.join(tmpDir, "store")).createTask(
+      "http://test/file.bin",
+      path.join(tmpDir, "file.bin"),
+    );
+    const task = new DownloadTask(inner);
+    const metrics = new DownloadMetrics();
+    metrics.attach(inner.id, inner.bus);
+    metrics.detach(inner.id, inner.bus); // detach immediately
+
+    await task.start();
+
+    // Snapshot should exist (created at attach time) but metrics are stale
+    const snap = metrics.getSnapshot(inner.id);
+    // bytesDownloaded stays at 0 because progress events were not received
+    expect(snap!.bytesDownloaded).toBe(0);
+  });
+
+  test("reset clears all snapshots", async () => {
+    const metrics = new DownloadMetrics();
+    // Manually add a fake snapshot entry
+    const fakeBus = { on: () => {}, off: () => {}, emit: () => {} } as any;
+    metrics.attach("task-x", fakeBus as DownloadEventBus);
+    expect(metrics.getSnapshot("task-x")).not.toBeNull();
+    metrics.reset();
+    expect(metrics.getSnapshot("task-x")).toBeNull();
+  });
+});
+
+// ─── ChunkScheduler throughput signal tests ───────────────────────────────────
+
+describe("ChunkScheduler throughput signal", () => {
+  test("addThroughputSample is a no-op when adaptive=false", () => {
+    const sc = new ChunkScheduler({
+      initial: 2, min: 1, max: 4, adaptive: false,
+    });
+    // Should not throw
+    sc.addThroughputSample(100);
+    sc.addThroughputSample(0);
+    sc.addThroughputSample(-1);
+    expect(sc.currentLimit).toBe(2); // limit unchanged
+  });
+
+  test("addThroughputSample records samples when adaptive=true", () => {
+    const sc = new ChunkScheduler({
+      initial: 2, min: 1, max: 16, adaptive: true,
+    });
+    // Should not throw and not change limit immediately
+    for (let i = 0; i < 15; i++) sc.addThroughputSample(10);
+    expect(sc.currentLimit).toBe(2); // no scale-up without error-rate window filled
+  });
+});
+

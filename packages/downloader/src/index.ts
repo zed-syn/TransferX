@@ -70,11 +70,24 @@ export { CapabilityDetector } from "./CapabilityDetector.js";
 export { RangePlanner } from "./RangePlanner.js";
 export { FileWriter } from "./FileWriter.js";
 export { ResumeStore } from "./ResumeStore.js";
+export { BufferPool } from "./BufferPool.js";
 
-// ── Execution layer ───────────────────────────────────────────────────────────
+// ── Execution layer ───────────────────────────────────────────────────────
 export { withRetry } from "./RetryEngine.js";
 export { ProgressEngine } from "./ProgressEngine.js";
 export { ChunkScheduler } from "./ChunkScheduler.js";
 export { DownloadEngine } from "./DownloadEngine.js";
 export type { DownloadResult, DownloadEngineTask } from "./DownloadEngine.js";
 export { DownloadTask, createDownloadTask } from "./DownloadTask.js";
+
+// ── Global coordinator (Phase 3) ───────────────────────────────────────────
+export { DownloadManager } from "./DownloadManager.js";
+export type {
+  DownloadManagerOptions,
+  DownloadManagerStatus,
+  ManagedDownload,
+} from "./DownloadManager.js";
+
+// ── Observability (Phase 4) ───────────────────────────────────────────────
+export { DownloadMetrics } from "./DownloadMetrics.js";
+export type { DownloadMetricsSnapshot } from "./DownloadMetrics.js";

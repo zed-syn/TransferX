@@ -94,6 +94,8 @@ export {
   DownloadEngine,
   DownloadTask,
   createDownloadTask,
+  DownloadManager,
+  DownloadMetrics,
 } from "@transferx/downloader";
 export type {
   DownloadConfig,
@@ -108,6 +110,10 @@ export type {
   RetryPolicy,
   DownloadResult,
   DownloadEngineTask,
+  DownloadManagerOptions,
+  DownloadManagerStatus,
+  ManagedDownload,
+  DownloadMetricsSnapshot,
 } from "@transferx/downloader";
 
 // ── Shared imports ────────────────────────────────────────────────────────────

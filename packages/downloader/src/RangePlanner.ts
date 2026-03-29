@@ -72,14 +72,17 @@ export class RangePlanner {
   static rehydrate(chunks: ChunkMeta[]): ChunkMeta[] {
     return chunks.map((c) => {
       if (c.status === "running" || c.status === "failed") {
-        // running: crashed mid-flight — we don't know which bytes actually
-        //   reached disk. Reset to the chunk start.
-        // failed:  last attempt may have done a partial write whose exact
-        //   extent is unknown. Reset to be safe.
-        // In both cases reset bytesWritten to 0 so the engine re-fetches
-        // from chunk.start. Sub-chunk resumption is NOT implemented —
-        // the entire chunk is re-downloaded.
-        return { ...c, status: "pending", bytesWritten: 0, attempts: 0 };
+        // Preserve bytesWritten for byte-level sub-chunk resume.
+        //
+        // DownloadEngine will resume from:
+        //   Range: bytes=(chunk.start + safeOffset)-(chunk.end)
+        // where safeOffset = floor(bytesWritten / RESUME_GRANULARITY) * RESUME_GRANULARITY
+        // (conservative 1 MiB round-down to handle kernel write-back uncertainty).
+        //
+        // pwrite semantics guarantee that re-writing already-written bytes is
+        // safe and idempotent — no corruption can occur.
+        return { ...c, status: "pending", attempts: 0 };
+        // NOTE: bytesWritten intentionally preserved (was reset to 0 before v1.2.0)
       }
       return { ...c };
     });

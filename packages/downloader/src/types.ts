@@ -122,6 +122,14 @@ export interface DownloadConfig {
   concurrency: ConcurrencyPolicy;
   /** Per-chunk retry behaviour. */
   retry: RetryPolicy;
+  /**
+   * How often (in completed chunks) to call fdatasync for crash durability.
+   * Lower values = stronger durability at higher I/O cost.
+   * Default: 8 — sync every 8 completed chunks.
+   * Set to 1 for maximum durability (sync after every chunk).
+   * Set to 0 to skip periodic sync (sync only at download completion).
+   */
+  fsyncIntervalChunks: number;
   /** Custom fetch implementation (for test injection). Default: globalThis.fetch */
   fetch?: typeof fetch;
   /** Custom headers to include in every request. */
@@ -149,6 +157,7 @@ export function resolveDownloadConfig(
     timeoutMs: partial.timeoutMs ?? 120_000,
     concurrency,
     retry,
+    fsyncIntervalChunks: partial.fsyncIntervalChunks ?? 8,
     ...(partial.fetch !== undefined ? { fetch: partial.fetch } : {}),
     ...(partial.headers !== undefined ? { headers: partial.headers } : {}),
   };

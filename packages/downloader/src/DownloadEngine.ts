@@ -71,6 +71,13 @@ import { ResumeStore } from "./ResumeStore.js";
 import { withRetry } from "./RetryEngine.js";
 import { ProgressEngine } from "./ProgressEngine.js";
 import { ChunkScheduler } from "./ChunkScheduler.js";
+import { BufferPool } from "./BufferPool.js";
+
+// Conservative resume granularity: round bytesWritten down to 1 MiB
+// boundaries before requesting partial chunks. This bounds potential discrepancy
+// between kernel write-back cache and guaranteed-on-disk data to ≤ 1 MiB.
+// pwrite() semantics make any overlap safe (idempotent overwrite).
+const RESUME_GRANULARITY = 1 * 1024 * 1024;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -311,7 +318,16 @@ class InternalTask implements DownloadEngineTask {
     const scheduler = new ChunkScheduler(this._config.concurrency);
     this._scheduler = scheduler;
 
+    // Shared write-coalescing pool: one buffer per active connection.
+    // Reduces fs.write() syscall count and per-frame Buffer allocations.
+    const pool = new BufferPool(
+      256 * 1024,
+      Math.max(4, this._config.concurrency.max * 2),
+    );
+
     let fatalError: DownloadError | null = null;
+    let completedSinceSync = 0;
+    const fsyncInterval = this._config.fsyncIntervalChunks;
 
     const pendingChunks = RangePlanner.pendingChunks(session.chunks);
 
@@ -326,9 +342,10 @@ class InternalTask implements DownloadEngineTask {
           chunk: this._getChunk(chunk.index)!,
         });
 
+        const t0 = Date.now();
         try {
-          await withRetry(
-            () => this._downloadChunk(chunk, writer, progress, signal),
+          const bytesDownloaded = await withRetry(
+            () => this._downloadChunk(chunk, writer, progress, signal, pool),
             this._config.retry,
             (err, attempt) => {
               scheduler.recordFailure();
@@ -342,18 +359,38 @@ class InternalTask implements DownloadEngineTask {
             signal,
           );
 
-          // Chunk succeeded
+          // Chunk succeeded — update state.
+          const isStreaming = RangePlanner.isStreamingChunk(chunk);
+          const finalBytesWritten = isStreaming
+            ? (this._getChunk(chunk.index)?.bytesWritten ?? bytesDownloaded)
+            : chunk.size;
           this._updateChunk(chunk.index, {
             status: "done",
-            bytesWritten: chunk.size,
+            bytesWritten: finalBytesWritten,
           });
           scheduler.recordSuccess();
+
+          // Report throughput to the hill-climbing algorithm.
+          const elapsedMs = Math.max(1, Date.now() - t0);
+          if (bytesDownloaded > 0) {
+            scheduler.addThroughputSample(bytesDownloaded / elapsedMs);
+          }
+
           this.bus.emit("chunkComplete", {
             taskId: this.id,
             chunk: this._getChunk(chunk.index)!,
           });
 
-          // Persist progress after each completed chunk
+          // Periodic fdatasync: flush every N completed chunks.
+          // Reset counter before await to prevent concurrent triggers.
+          completedSinceSync++;
+          if (fsyncInterval > 0 && completedSinceSync >= fsyncInterval) {
+            completedSinceSync = 0;
+            await writer.flush().catch(() => undefined);
+          }
+
+          // Persist session after (potential) sync — session now reflects
+          // bytes that are guaranteed on disk.
           if (this._session) {
             this._session = { ...this._session, updatedAt: Date.now() };
             await this._store.save(this._session).catch(() => undefined);
@@ -427,22 +464,52 @@ class InternalTask implements DownloadEngineTask {
 
   // ─── Core HTTP download for a single chunk ─────────────────────────────────
 
+  /**
+   * Download one chunk and write it to disk at the correct byte offset.
+   *
+   * Byte-level resume:
+   *   Reads the live session bytesWritten (accumulated across retries), rounds
+   *   it down to a 1 MiB boundary for kernel write-back safety, and requests
+   *   only the remaining bytes via "Range: bytes=resumeStart-end".
+   *   The write starts at the matching file offset so no bytes are ever
+   *   double-counted and no gaps are created.
+   *
+   * @returns Bytes written during this invocation (excludes prior resume bytes).
+   */
   private async _downloadChunk(
     chunk: ChunkMeta,
     writer: FileWriter,
     progress: ProgressEngine,
     signal: AbortSignal,
-  ): Promise<void> {
+    pool: BufferPool,
+  ): Promise<number> {
     const fetchFn = this._config.fetch ?? globalThis.fetch;
     const isStreaming = RangePlanner.isStreamingChunk(chunk);
 
+    // Byte-level sub-chunk resume.
+    // Use live session state (accounts for bytes written in prior retry attempts).
+    // Round down to RESUME_GRANULARITY (1 MiB) to handle kernel write-back
+    // cache uncertainty for cross-process crash-resume scenarios.
+    const rawBytesWritten = this._getChunk(chunk.index)?.bytesWritten ?? 0;
+    const resumeOffset =
+      rawBytesWritten > 0
+        ? rawBytesWritten - (rawBytesWritten % RESUME_GRANULARITY)
+        : 0;
+
+    // Align the in-session bytesWritten to the conservative resume baseline
+    // so the onBytes callback starts accumulating from the right position.
+    if (resumeOffset < rawBytesWritten) {
+      this._updateChunk(chunk.index, { bytesWritten: resumeOffset });
+    }
+
     const headers: Record<string, string> = { ...this._config.headers };
     if (!isStreaming) {
-      headers["Range"] = `bytes=${chunk.start}-${chunk.end}`;
+      // Request only the remaining bytes.
+      const rangeStart = chunk.start + resumeOffset;
+      headers["Range"] = `bytes=${rangeStart}-${chunk.end}`;
     }
 
     const timeoutSignal = AbortSignal.timeout(this._config.timeoutMs);
-    // Combine caller's signal with per-request timeout
     const combinedSignal = anyAborted([signal, timeoutSignal]);
 
     let response: Response;
@@ -451,7 +518,6 @@ class InternalTask implements DownloadEngineTask {
     } catch (err: unknown) {
       const e = err as Error | undefined;
       if (e?.name === "AbortError" || e?.name === "TimeoutError") {
-        // Distinguish cancel vs timeout by checking which signal fired
         if (signal.aborted) {
           throw new DownloadError({
             message: "Download cancelled",
@@ -467,15 +533,10 @@ class InternalTask implements DownloadEngineTask {
       );
     }
 
-    // Validate status code
+    // Validate status code.
     const expectedStatus = isStreaming ? 200 : 206;
     if (response.status !== expectedStatus) {
-      // Some servers return 200 for range requests (no partial content)
-      // If we asked for range but got 200, treat as streaming fallback (still ok)
       if (!isStreaming && response.status === 200) {
-        // Server silently fell back to full response — this is only safe for
-        // chunk 0 and single-chunk plans. For multi-chunk plans it would cause
-        // data corruption (each chunk writing from start). Throw range error.
         if (chunk.index > 0) {
           throw httpError(
             200,
@@ -483,7 +544,7 @@ class InternalTask implements DownloadEngineTask {
             chunk.index,
           );
         }
-        // chunk 0 — accept the full-file stream
+        // chunk 0 with full-file fallback — acceptable
       } else if (response.status !== expectedStatus) {
         throw httpError(
           response.status,
@@ -500,10 +561,13 @@ class InternalTask implements DownloadEngineTask {
       );
     }
 
-    // Stream directly to disk
+    // File write starts at the resume offset within the chunk's extent.
+    const writeStartOffset = isStreaming ? 0 : chunk.start + resumeOffset;
+
+    // Stream directly to disk via write-coalescing pool.
     const written = await writer.writeStream(
       response.body,
-      chunk.start,
+      writeStartOffset,
       (bytes) => {
         this._updateChunk(chunk.index, {
           bytesWritten:
@@ -517,12 +581,15 @@ class InternalTask implements DownloadEngineTask {
           };
         }
       },
+      pool,
     );
 
-    // For streaming chunks, update the final known size
+    // For streaming chunks, report the final size to ProgressEngine.
     if (isStreaming) {
       progress.setTotalBytes(written);
     }
+
+    return written;
   }
 
   // ─── Session helpers ────────────────────────────────────────────────────────
