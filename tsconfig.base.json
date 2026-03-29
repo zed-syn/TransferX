@@ -21,7 +21,8 @@
       "@transferx/core": ["./packages/core/src/index.ts"],
       "@transferx/adapter-b2": ["./packages/adapters/b2/src/index.ts"],
       "@transferx/adapter-http": ["./packages/adapters/http/src/index.ts"],
-      "@transferx/sdk": ["./packages/sdk/src/index.ts"]
+      "@transferx/sdk": ["./packages/sdk/src/index.ts"],
+      "@transferx/adapter-s3": ["./packages/adapters/s3/src/index.ts"]
     }
   },
   "include": [

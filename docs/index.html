@@ -643,6 +643,10 @@
         <a href="#api-errors">Errors</a>
         <a href="#api-types">Types</a>
 
+        <div class="section-label">Adapters</div>
+        <a href="#s3-adapter">S3 Adapter</a>
+        <a href="#r2-adapter">R2 Adapter</a>
+
         <div class="section-label">Guides</div>
         <a href="#custom-adapter">Custom Adapter</a>
         <a href="#crash-resume">Crash Resume</a>
@@ -1431,6 +1435,261 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
   <span class="ty">ITransferAdapter</span><span class="pn">,</span>
   <span class="ty">ChunkUploadResult</span><span class="pn">,</span>
 <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span></code></pre>
+      </section>
+
+      <hr />
+
+      <!-- ── S3 Adapter ── -->
+      <section class="section" id="s3-adapter">
+        <h2>S3 Adapter</h2>
+        <p>
+          <code>@transferx/adapter-s3</code> provides a production-ready adapter
+          for <strong>AWS S3</strong> multipart uploads built on
+          <code>@aws-sdk/client-s3</code> v3.
+        </p>
+
+        <h3>Installation</h3>
+        <pre><code><span class="cm">npm install @transferx/adapter-s3</span></code></pre>
+
+        <h3>Options</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Type</th>
+                <th>Required</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>bucket</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>Target S3 bucket name.</td>
+              </tr>
+              <tr>
+                <td><code>region</code></td>
+                <td><code>string</code></td>
+                <td>No</td>
+                <td>AWS region (default: <code>us-east-1</code>).</td>
+              </tr>
+              <tr>
+                <td><code>credentials.accessKeyId</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>AWS access key ID.</td>
+              </tr>
+              <tr>
+                <td><code>credentials.secretAccessKey</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>AWS secret access key.</td>
+              </tr>
+              <tr>
+                <td><code>credentials.sessionToken</code></td>
+                <td><code>string</code></td>
+                <td>No</td>
+                <td>Temporary session token (STS).</td>
+              </tr>
+              <tr>
+                <td><code>endpoint</code></td>
+                <td><code>string</code></td>
+                <td>No</td>
+                <td>Custom endpoint URL (e.g. S3-compatible stores).</td>
+              </tr>
+              <tr>
+                <td><code>forcePathStyle</code></td>
+                <td><code>boolean</code></td>
+                <td>No</td>
+                <td>Use path-style addressing instead of virtual-hosted.</td>
+              </tr>
+              <tr>
+                <td><code>timeoutMs</code></td>
+                <td><code>number</code></td>
+                <td>No</td>
+                <td>
+                  Per-request timeout in milliseconds (default:
+                  <code>120 000</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>onLog</code></td>
+                <td><code>LogCallback</code></td>
+                <td>No</td>
+                <td>
+                  Structured log callback for debug / info / warn / error
+                  events.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Usage</h3>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="id">S3Adapter</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/adapter-s3'</span><span class="pn">;</span>
+<span class="kw">import</span> <span class="pn">{</span>
+  <span class="id">UploadEngine</span><span class="pn">,</span> <span class="id">EventBus</span><span class="pn">,</span> <span class="id">MemorySessionStore</span><span class="pn">,</span> <span class="id">resolveEngineConfig</span><span class="pn">,</span>
+<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="id">adapter</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">S3Adapter</span><span class="pn">({</span>
+  <span class="id">bucket</span><span class="pn">:</span> <span class="str">'my-bucket'</span><span class="pn">,</span>
+  <span class="id">region</span><span class="pn">:</span> <span class="str">'us-east-1'</span><span class="pn">,</span>
+  <span class="id">credentials</span><span class="pn">:</span> <span class="pn">{</span>
+    <span class="id">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_ACCESS_KEY_ID</span><span class="pn">!,</span>
+    <span class="id">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">AWS_SECRET_ACCESS_KEY</span><span class="pn">!,</span>
+  <span class="pn">},</span>
+<span class="pn">});</span>
+
+<span class="kw">const</span> <span class="id">engine</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">UploadEngine</span><span class="pn">(</span>
+  <span class="id">adapter</span><span class="pn">,</span>
+  <span class="kw">new</span> <span class="ty">EventBus</span><span class="pn">(),</span>
+  <span class="kw">new</span> <span class="ty">MemorySessionStore</span><span class="pn">(),</span>
+  <span class="id">resolveEngineConfig</span><span class="pn">({}),</span>
+<span class="pn">);</span>
+
+<span class="kw">await</span> <span class="id">engine</span><span class="pn">.</span><span class="id">upload</span><span class="pn">(</span><span class="id">file</span><span class="pn">,</span> <span class="pn">{</span> <span class="id">key</span><span class="pn">:</span> <span class="str">'uploads/video.mp4'</span> <span class="pn">});</span></code></pre>
+
+        <h3>Notes</h3>
+        <ul>
+          <li>
+            <strong>ETags</strong> are stored verbatim (including surrounding
+            double-quotes) as <code>providerToken</code> on each chunk. This is
+            required by <code>CompleteMultipartUpload</code>.
+          </li>
+          <li>
+            <strong>Resume</strong> — <code>getRemoteState()</code> calls
+            <code>ListParts</code> and follows pagination via
+            <code>IsTruncated</code> / <code>NextPartNumberMarker</code>, so
+            interrupted uploads of any size resume correctly.
+          </li>
+          <li>
+            <strong>Retries</strong> — SDK-level retries are disabled (<code
+              >maxAttempts: 1</code
+            >). The TransferX engine's retry loop owns all back-off logic.
+          </li>
+        </ul>
+      </section>
+
+      <hr />
+
+      <!-- ── R2 Adapter ── -->
+      <section class="section" id="r2-adapter">
+        <h2>R2 Adapter</h2>
+        <p>
+          <code>R2Adapter</code> (also exported from
+          <code>@transferx/adapter-s3</code>) wraps <code>S3Adapter</code> with
+          Cloudflare R2 defaults so you only need to supply your
+          <strong>account ID</strong>, bucket, and credentials.
+        </p>
+
+        <h3>Installation</h3>
+        <pre><code><span class="cm">npm install @transferx/adapter-s3</span></code></pre>
+
+        <h3>Options</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Type</th>
+                <th>Required</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>accountId</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>
+                  Cloudflare account ID — used to build the R2 endpoint URL.
+                </td>
+              </tr>
+              <tr>
+                <td><code>bucket</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>R2 bucket name.</td>
+              </tr>
+              <tr>
+                <td><code>credentials.accessKeyId</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>R2 API token access key ID.</td>
+              </tr>
+              <tr>
+                <td><code>credentials.secretAccessKey</code></td>
+                <td><code>string</code></td>
+                <td>Yes</td>
+                <td>R2 API token secret access key.</td>
+              </tr>
+              <tr>
+                <td><code>timeoutMs</code></td>
+                <td><code>number</code></td>
+                <td>No</td>
+                <td>
+                  Per-request timeout in milliseconds (default:
+                  <code>120 000</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>onLog</code></td>
+                <td><code>LogCallback</code></td>
+                <td>No</td>
+                <td>Structured log callback.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-tip">
+          <strong>Auto-configured</strong> — <code>endpoint</code>,
+          <code>region</code> (<code>"auto"</code>), and
+          <code>forcePathStyle</code> are set automatically. Do not pass them
+          directly when using <code>R2Adapter</code>.
+        </div>
+
+        <h3>Usage</h3>
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="id">R2Adapter</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/adapter-s3'</span><span class="pn">;</span>
+<span class="kw">import</span> <span class="pn">{</span>
+  <span class="id">UploadEngine</span><span class="pn">,</span> <span class="id">EventBus</span><span class="pn">,</span> <span class="id">MemorySessionStore</span><span class="pn">,</span> <span class="id">resolveEngineConfig</span><span class="pn">,</span>
+<span class="pn">}</span> <span class="kw">from</span> <span class="str">'@transferx/core'</span><span class="pn">;</span>
+
+<span class="kw">const</span> <span class="id">adapter</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">R2Adapter</span><span class="pn">({</span>
+  <span class="id">accountId</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">CF_ACCOUNT_ID</span><span class="pn">!,</span>
+  <span class="id">bucket</span><span class="pn">:</span>    <span class="str">'my-r2-bucket'</span><span class="pn">,</span>
+  <span class="id">credentials</span><span class="pn">:</span> <span class="pn">{</span>
+    <span class="id">accessKeyId</span><span class="pn">:</span>     <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_ACCESS_KEY_ID</span><span class="pn">!,</span>
+    <span class="id">secretAccessKey</span><span class="pn">:</span> <span class="id">process</span><span class="pn">.</span><span class="id">env</span><span class="pn">.</span><span class="id">R2_SECRET_ACCESS_KEY</span><span class="pn">!,</span>
+  <span class="pn">},</span>
+<span class="pn">});</span>
+
+<span class="kw">const</span> <span class="id">engine</span> <span class="op">=</span> <span class="kw">new</span> <span class="ty">UploadEngine</span><span class="pn">(</span>
+  <span class="id">adapter</span><span class="pn">,</span>
+  <span class="kw">new</span> <span class="ty">EventBus</span><span class="pn">(),</span>
+  <span class="kw">new</span> <span class="ty">MemorySessionStore</span><span class="pn">(),</span>
+  <span class="id">resolveEngineConfig</span><span class="pn">({}),</span>
+<span class="pn">);</span>
+
+<span class="kw">await</span> <span class="id">engine</span><span class="pn">.</span><span class="id">upload</span><span class="pn">(</span><span class="id">file</span><span class="pn">,</span> <span class="pn">{</span> <span class="id">key</span><span class="pn">:</span> <span class="str">'uploads/video.mp4'</span> <span class="pn">});</span></code></pre>
+
+        <h3>Notes</h3>
+        <ul>
+          <li>
+            R2 ignores the <code>region</code> value; the adapter passes
+            <code>"auto"</code> to satisfy the AWS SDK requirement.
+          </li>
+          <li>
+            The endpoint is constructed as
+            <code>https://&lt;accountId&gt;.r2.cloudflarestorage.com</code>.
+          </li>
+          <li>
+            All resume, retry, and timeout behaviour is identical to
+            <code>S3Adapter</code> — see the S3 Adapter section above.
+          </li>
+        </ul>
       </section>
 
       <hr />

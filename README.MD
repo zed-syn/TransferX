@@ -7,7 +7,7 @@
 Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability — retries, resumability, observability, and pluggable storage backends.
 
 ```
-12 test suites · 185 tests · 0 compile errors
+13 test suites · 215 tests · 0 compile errors
 ```
 
 ---
@@ -31,6 +31,7 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 | `@transferx/sdk`        | **Start here.** High-level façade — `createB2Engine()` factory |
 | `@transferx/core`       | Engine, scheduler, retry, progress, stores, types              |
 | `@transferx/adapter-b2` | Backblaze B2 Native API adapter                                |
+| `@transferx/adapter-s3` | AWS S3 and Cloudflare R2 multipart upload adapter              |
 
 ---
 
@@ -96,6 +97,73 @@ await store.save(session);
 const result = await upload(session);
 // result.state === 'done'
 ```
+
+### 3. Upload to AWS S3
+
+```bash
+npm install @transferx/adapter-s3
+```
+
+```typescript
+import { S3Adapter } from "@transferx/adapter-s3";
+import {
+  UploadEngine,
+  EventBus,
+  MemorySessionStore,
+  resolveEngineConfig,
+} from "@transferx/core";
+import * as fs from "fs";
+
+const adapter = new S3Adapter({
+  bucket: process.env.S3_BUCKET!,
+  region: "us-east-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+  },
+});
+
+const engine = new UploadEngine(
+  adapter,
+  new EventBus(),
+  new MemorySessionStore(),
+  resolveEngineConfig({}),
+);
+
+const stream = fs.createReadStream("./video.mp4");
+const size = fs.statSync("./video.mp4").size;
+await engine.upload(stream, { key: "uploads/video.mp4", size });
+```
+
+### 4. Upload to Cloudflare R2
+
+```typescript
+import { R2Adapter } from "@transferx/adapter-s3";
+import {
+  UploadEngine,
+  EventBus,
+  MemorySessionStore,
+  resolveEngineConfig,
+} from "@transferx/core";
+
+const adapter = new R2Adapter({
+  accountId: process.env.CF_ACCOUNT_ID!,
+  bucket: process.env.R2_BUCKET!,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
+
+const engine = new UploadEngine(
+  adapter,
+  new EventBus(),
+  new MemorySessionStore(),
+  resolveEngineConfig({}),
+);
+```
+
+> `R2Adapter` automatically sets `endpoint`, `region: "auto"`, and `forcePathStyle: true` — no extra config needed.
 
 ---
 
@@ -521,8 +589,9 @@ npx jest --testPathPattern="engine" --runInBand
 | `engine.test.ts`       | 40    | Full upload lifecycle, checksumVerify, log events     |
 | `resume.test.ts`       | 21    | Resume, cancel, reconcile, file-change detection      |
 | `B2Adapter.test.ts`    | 18    | Mock-fetch B2 lifecycle, auth retry, HTTP timeout     |
+| `S3Adapter.test.ts`    | 30    | S3/R2 lifecycle, resume, error mapping, HTTP timeout  |
 
-**Total: 185 tests**
+**Total: 215 tests**
 
 ---
 
@@ -534,6 +603,7 @@ packages/
   sdk/           – @transferx/sdk   (public entry point)
   adapters/
     b2/          – @transferx/adapter-b2
+    s3/          – @transferx/adapter-s3  (S3 + R2)
     http/        – @transferx/adapter-http  (planned)
 examples/
   node-b2/       – Production-ready CLI upload example

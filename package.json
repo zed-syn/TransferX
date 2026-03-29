@@ -38,6 +38,7 @@
       "^@transferx/core$": "<rootDir>/packages/core/src/index.ts",
       "^@transferx/adapter-b2$": "<rootDir>/packages/adapters/b2/src/index.ts",
       "^@transferx/adapter-http$": "<rootDir>/packages/adapters/http/src/index.ts",
+      "^@transferx/adapter-s3$": "<rootDir>/packages/adapters/s3/src/index.ts",
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "collectCoverageFrom": [
