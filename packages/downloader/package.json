@@ -1,6 +1,6 @@
 {
   "name": "@transferx/downloader",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "IDM-class parallel download engine — multi-connection range downloads with byte-level resume, adaptive concurrency, and streaming writes",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,5 +20,3 @@
     "typescript": "*"
   }
 }
-
-

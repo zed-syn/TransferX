@@ -86,7 +86,8 @@ export interface PooledHttpClientOptions {
   /**
    * Enable HTTP/2 via ALPN negotiation.
    * When true, undici upgrades to h2 if the server advertises it.
-   * Default: true for https: origins, false for http:.
+   * Default: false. Electron/Windows abort paths are materially more stable
+   * on HTTP/1.1 for long-lived range downloads.
    */
   allowH2?: boolean;
 }
@@ -226,11 +227,11 @@ export class PooledHttpClient implements IHttpClient {
     const n = Math.min(Math.max(1, connections), 8); // 1 ≤ n ≤ 8
     this._maxConn = n;
     this._origin = origin;
-    this._http2 = opts?.allowH2 ?? origin.startsWith("https:");
+    this._http2 = opts?.allowH2 ?? false;
     this._pool = new UndiciPool(origin, {
       connections: n,
       pipelining: opts?.pipelining ?? 2, // sweet-spot: fills pipe without HOL stalls
-      allowH2: this._http2,              // ALPN h2 negotiation for HTTPS origins
+      allowH2: this._http2,
       keepAliveTimeout: 4_000,           // keep socket warm between chunks
       keepAliveMaxTimeout: 600_000,      // allow multi-minute downloads to reuse
     }) as import("undici").Pool;
@@ -285,9 +286,22 @@ export class PooledHttpClient implements IHttpClient {
         header: (name) => headerMap.get(name.toLowerCase()) ?? null,
         body: webBody,
         cancel: async () => {
-          // Destroy the underlying Node.js Readable to release the socket
-          // back to the pool without draining the full body.
-          (body as Readable | undefined)?.destroy();
+          // Gracefully drain small probe bodies instead of hard-destroying the
+          // undici stream. This avoids abort assertions seen on Electron/Win.
+          const nodeBody = body as Readable | undefined;
+          if (!nodeBody) return;
+          await new Promise<void>((resolve) => {
+            let settled = false;
+            const done = () => {
+              if (settled) return;
+              settled = true;
+              resolve();
+            };
+            nodeBody.once("end", done);
+            nodeBody.once("close", done);
+            nodeBody.once("error", done);
+            nodeBody.resume();
+          });
         },
       };
     } catch (err) {
