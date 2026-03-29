@@ -2,12 +2,12 @@
 
 ![npm](https://img.shields.io/npm/v/@transferx/sdk)
 ![license](https://img.shields.io/github/license/zed-syn/TransferX)
-![tests](https://img.shields.io/badge/tests-266_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-302_passed-brightgreen)
 
 Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability — retries, resumability, observability, and pluggable storage backends.
 
 ```
-16 test suites · 266 tests · 0 compile errors
+17 test suites · 302 tests · 0 compile errors
 ```
 
 ---
@@ -15,12 +15,14 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 ## Features
 
 - **Chunked multipart upload** — splits files into configurable chunks, uploads them in parallel
-- **Parallel HTTP downloads** — IDM-class range downloads, adaptive concurrency, byte-level crash resume
+- **Parallel HTTP downloads** — IDM-class range downloads, adaptive concurrency, true byte-level sub-chunk crash resume
 - **Retry with full-jitter backoff** — exponential backoff per chunk, rate-limit aware (HTTP 429)
-- **Resumable sessions** — sessions are persisted to disk; resume after crash with zero data loss
+- **Resumable sessions** — sessions persisted to disk; resumes from sub-chunk byte boundary, not just chunk boundary
 - **Live progress events** — EMA-smoothed speed, ETA, bytes/s, percent on a typed event bus
 - **Pluggable adapters** — B2, S3/R2, and generic HTTP adapters included; implement `ITransferAdapter` for any provider
-- **Adaptive concurrency** — sliding-window error-rate tracking automatically scales parallel chunks between `min` and `max`
+- **Adaptive concurrency** — throughput hill-climbing + error-rate controller scales parallel connections between `min` and `max`
+- **DownloadManager** — global FIFO queue with `maxConcurrentDownloads` cap; prevents resource exhaustion across concurrent downloads
+- **DownloadMetrics** — passive event-driven metrics: bytes, chunk latency, retry count, error rate, peak speed per task
 - **Strict TypeScript** — `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`
 - **Zero runtime dependencies** in `@transferx/core`
 

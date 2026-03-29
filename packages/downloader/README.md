@@ -9,16 +9,21 @@ for servers that do not support `Range` requests.
 
 ## Features
 
-| Feature              | Details                                                                                       |
-| -------------------- | --------------------------------------------------------------------------------------------- |
-| Parallel connections | Up to 8 simultaneous range requests (configurable)                                            |
-| Crash resume         | JSON session persisted to disk; resumes from the last complete chunk boundary                 |
-| Retry                | Per-chunk exponential back-off with full jitter; non-retryable errors (4xx) throw immediately |
-| Progress             | EMA-smoothed `bytesPerSec`, `percent`, `eta`, throttled to 250 ms intervals                   |
-| Adaptive concurrency | Sliding-window error-rate controller raises/lowers the connection ceiling automatically       |
-| Server fallback      | If the server returns `200` instead of `206`, falls back to a single-stream download          |
-| Stale detection      | Detects stale sessions via ETag → Last-Modified → file-size comparison before resuming        |
-| No native deps       | Pure Node.js; only `node:fs`, `node:crypto`, `node:path`                                      |
+| Feature              | Details                                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------------------- |
+| Parallel connections | Up to 8 simultaneous range requests (configurable)                                                  |
+| Byte-level resume    | JSON session persisted to disk; resumes from sub-chunk 1 MiB boundary — not just the chunk start    |
+| Retry                | Per-chunk exponential back-off with full jitter; non-retryable errors (4xx) throw immediately       |
+| Progress             | EMA-smoothed `bytesPerSec`, `percent`, `eta`, throttled to 250 ms intervals                         |
+| Adaptive concurrency | Throughput hill-climbing (≥5 % improvement gate) + error-rate controller; scales `min`↔`max` automatically |
+| Disk pre-allocation  | `ftruncate()` reserves the full file extent immediately after open                                  |
+| Periodic fdatasync   | `syncOnChunkComplete(N)` flushes kernel write-back every N chunks; bounds power-loss data loss      |
+| Write coalescing     | `BufferPool` accumulates small stream frames into 256 KiB writes; reduces GC pressure and syscalls  |
+| DownloadManager      | FIFO queue with `maxConcurrentDownloads` cap; prevents resource exhaustion                          |
+| DownloadMetrics      | Passive event-driven per-task metrics: bytes, chunk latency, retry count, error rate, peak speed    |
+| Server fallback      | If the server returns `200` instead of `206`, falls back to a single-stream download                |
+| Stale detection      | Detects stale sessions via ETag → Last-Modified → file-size comparison before resuming              |
+| No native deps       | Pure Node.js; only `node:fs`, `node:crypto`, `node:path`                                            |
 
 ---
 
@@ -119,10 +124,14 @@ On the next call to `task.start()` for the same `url` / `outputPath` pair:
 1. The session file is loaded and staleness is checked against the server
    (ETag → Last-Modified → Content-Length, in order of preference).
 2. If the server resource has changed, a `staleSession` error is thrown.
-3. Otherwise, only chunks with status `pending` or `failed` are re-downloaded.
+3. For each incomplete chunk, the engine reads `bytesWritten` from the session
+   and rounds it down to the nearest 1 MiB boundary (`RESUME_GRANULARITY`).
+4. The `Range` header is set to `bytes=(chunk.start + resumeOffset)-(chunk.end)`
+   so only the unconfirmed bytes are re-downloaded.
 
-**Limitation**: Resume granularity is per-chunk. If a chunk was partially
-written before a crash, the entire chunk is re-downloaded from its start offset.
+The 1 MiB round-down is conservative: the kernel write-back cache may not
+have flushed the last partial MiB to stable storage before a crash. Rounding
+down makes any overlap idempotent via pwrite semantics.
 
 ---
 
@@ -131,15 +140,16 @@ written before a crash, the entire chunk is re-downloaded from its start offset.
 ```typescript
 const engine = new DownloadEngine({
   config: {
-    concurrency: 4, // parallel connections (default: 8)
-    chunkSizeBytes: 8 << 20, // 8 MiB chunk size (default: 4 MiB)
+    concurrency: 4,            // parallel connections (default: 8)
+    chunkSizeBytes: 8 << 20,   // 8 MiB chunk size (default: 4 MiB)
+    fsyncIntervalChunks: 8,    // fdatasync every N chunks (default: 8; 0 = off)
     retry: {
-      maxAttempts: 5, // max retry attempts per chunk (default: 5)
-      baseDelayMs: 500, // initial backoff base (default: 500 ms)
-      maxDelayMs: 30_000, // backoff ceiling (default: 30 s)
-      jitterMs: 200, // random jitter added to each delay (default: 200 ms)
+      maxAttempts: 5,          // max retry attempts per chunk (default: 5)
+      baseDelayMs: 500,        // initial backoff base (default: 500 ms)
+      maxDelayMs: 30_000,      // backoff ceiling (default: 30 s)
+      jitterMs: 200,           // random jitter added to each delay (default: 200 ms)
     },
-    progressIntervalMs: 500, // progress event throttle (default: 250 ms)
+    progressIntervalMs: 500,   // progress event throttle (default: 250 ms)
     headers: {
       // extra headers sent on every request
       Authorization: "Bearer <token>",
@@ -149,7 +159,75 @@ const engine = new DownloadEngine({
 });
 ```
 
-All config fields are optional; unset fields use the defaults shown above.
+### `DownloadConfig` fields
+
+| Field                  | Type     | Default   | Description                                                                              |
+| ---------------------- | -------- | --------- | ---------------------------------------------------------------------------------------- |
+| `concurrency`          | `number` | `8`       | Max parallel range connections                                                           |
+| `chunkSizeBytes`       | `number` | `4194304` | Bytes per chunk (4 MiB)                                                                  |
+| `fsyncIntervalChunks`  | `number` | `8`       | Call `fdatasync` every N chunks. `0` disables. Bounds power-loss data loss to N×chunkSize |
+| `progressIntervalMs`   | `number` | `250`     | Minimum ms between `progress` events                                                     |
+| `retry.maxAttempts`    | `number` | `5`       | Max attempts per chunk including first                                                   |
+| `retry.baseDelayMs`    | `number` | `500`     | Exponential backoff base                                                                 |
+| `retry.maxDelayMs`     | `number` | `30000`   | Backoff ceiling                                                                          |
+| `retry.jitterMs`       | `number` | `200`     | Max random jitter per delay                                                              |
+
+---
+
+## DownloadManager
+
+Use `DownloadManager` when running multiple downloads concurrently to prevent
+resource exhaustion:
+
+```typescript
+import { DownloadManager } from "@transferx/downloader";
+
+const manager = new DownloadManager({ maxConcurrentDownloads: 3 });
+
+// Enqueue downloads — they start automatically as slots free up
+const dl1 = manager.enqueue("https://example.com/a.zip", "/tmp/a.zip");
+const dl2 = manager.enqueue("https://example.com/b.zip", "/tmp/b.zip");
+const dl3 = manager.enqueue("https://example.com/c.zip", "/tmp/c.zip");
+const dl4 = manager.enqueue("https://example.com/d.zip", "/tmp/d.zip"); // queued until a slot frees
+
+dl1.task.on("progress", (p) => console.log(`a.zip: ${p.percent?.toFixed(1)}%`));
+
+await Promise.all([dl1.promise, dl2.promise, dl3.promise, dl4.promise]);
+
+console.log(manager.getStatus()); // { active: 0, queued: 0 }
+```
+
+`manager.cancelAll()` rejects all queued promises and cancels active downloads.
+
+---
+
+## DownloadMetrics
+
+Attach `DownloadMetrics` to one or more tasks for aggregated observability:
+
+```typescript
+import { DownloadEngine, DownloadTask, DownloadMetrics } from "@transferx/downloader";
+
+const engine = new DownloadEngine();
+const metrics = new DownloadMetrics();
+
+const raw = engine.createTask("https://example.com/file.zip", "/tmp/file.zip");
+metrics.attach(raw.id, raw.bus); // subscribe before start()
+
+const task = new DownloadTask(raw);
+await task.start();
+
+const snap = metrics.getSnapshot(raw.id)!;
+console.log(`Downloaded : ${snap.bytesDownloaded} bytes`);
+console.log(`Chunks     : ${snap.chunksCompleted} completed, ${snap.chunksFailed} failed`);
+console.log(`Retries    : ${snap.retryCount}`);
+console.log(`Avg latency: ${snap.avgChunkLatencyMs.toFixed(0)} ms/chunk`);
+console.log(`Peak speed : ${(snap.peakSpeedBytesPerSec / 1e6).toFixed(2)} MB/s`);
+
+// Aggregate across multiple tasks
+const agg = metrics.getAggregate();
+console.log(`Total downloaded: ${agg.bytesDownloaded}`);
+```
 
 ---
 
@@ -230,18 +308,23 @@ DownloadEngine.run(task):
                                           Content-Length, ETag, Last-Modified
   2. ResumeStore.load(sessionId)        — load prior session (if any)
      └─ detectStaleness()              — compare ETag/LM/size with server
-     └─ RangePlanner.rehydrate()       — reset in-progress chunk state
+     └─ RangePlanner.rehydrate()       — preserve bytesWritten; reset only attempts
   3. RangePlanner.plan()               — split fileSize into N equal chunks
                                           (or single streaming chunk if no range)
   4. FileWriter.open()                  — open/create output file
+     └─ ftruncate(fileSize)            — reserve full extent immediately
   5. ProgressEngine.start()            — start EMA speed timer
-  6. ChunkScheduler.push() × N         — enqueue chunk tasks
+  6. BufferPool.create()               — allocate write-coalescing pool (256 KiB × max×2 buffers)
+  7. ChunkScheduler.push() × N         — enqueue chunk tasks
      └─ per chunk:
-          withRetry(_downloadChunk)    — fetch Range bytes, stream to FileWriter
-        → recordSuccess/recordFailure  — feed adaptive concurrency controller
-  7. ChunkScheduler.drain()            — wait for all chunks to finish
-  8. FileWriter.flush() + close()      — fsync + cleanup
-  9. ResumeStore.delete(sessionId)     — remove session file on success
+          compute resumeOffset          — bytesWritten rounded DOWN to 1 MiB boundary
+          withRetry(_downloadChunk)    — fetch Range bytes, coalesce into pool, stream to FileWriter
+        → recordSuccess/recordFailure  — feed error-rate adaptive controller
+        → addThroughputSample()        — feed throughput hill-climbing controller
+        → syncOnChunkComplete(N)       — fdatasync every N chunks
+  8. ChunkScheduler.drain()            — wait for all chunks to finish
+  9. FileWriter.flush() + close()      — final fdatasync + cleanup
+ 10. ResumeStore.delete(sessionId)     — remove session file on success
 
 On cancel:  session persisted as "cancelled" (resumable)
 On failure: session persisted as "failed" with per-chunk error details
@@ -262,6 +345,10 @@ import type {
   DownloadError,
   ErrorCategory,
   ChunkMeta,
+  DownloadManagerOptions,
+  DownloadManagerStatus,
+  ManagedDownload,
+  DownloadMetricsSnapshot,
 } from "@transferx/downloader";
 ```
 
