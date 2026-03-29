@@ -117,8 +117,21 @@ export interface HttpAdapterOptions {
 export class HttpAdapter implements ITransferAdapter {
   private readonly _opts: HttpAdapterOptions;
 
+  /**
+   * `getRemoteState` is only present on the instance when `getRemoteStateFn`
+   * is provided in options. The engine checks `if (!adapter.getRemoteState)`
+   * before calling it, so the conditional assignment is the correct pattern
+   * here — it avoids the engine always going through the throw-and-catch path.
+   */
+  getRemoteState?: (session: TransferSession) => Promise<RemoteUploadState>;
+
   constructor(opts: HttpAdapterOptions) {
     this._opts = opts;
+    if (opts.getRemoteStateFn) {
+      // Capture fn to avoid re-closure over mutable opts reference
+      const fn = opts.getRemoteStateFn;
+      this.getRemoteState = (session: TransferSession) => fn(session);
+    }
   }
 
   // ── ITransferAdapter ───────────────────────────────────────────────────────
@@ -153,16 +166,6 @@ export class HttpAdapter implements ITransferAdapter {
     if (this._opts.abortFn) {
       await this._opts.abortFn(session).catch(() => undefined);
     }
-  }
-
-  async getRemoteState(session: TransferSession): Promise<RemoteUploadState> {
-    if (!this._opts.getRemoteStateFn) {
-      throw new Error(
-        "HttpAdapter: getRemoteStateFn is not configured. " +
-          "Provide getRemoteStateFn in HttpAdapterOptions to enable resume reconciliation.",
-      );
-    }
-    return this._opts.getRemoteStateFn(session);
   }
 }
 

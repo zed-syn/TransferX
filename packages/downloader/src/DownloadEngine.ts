@@ -224,7 +224,7 @@ class InternalTask implements DownloadEngineTask {
       throw dlErr;
     }
 
-    this.bus.emit("log" as any, {
+    this.bus.emit("log", {
       taskId: this.id,
       level: "info",
       message: `Capability probe: supportsRange=${capabilities.supportsRange}, fileSize=${capabilities.fileSize ?? "unknown"}, etag=${capabilities.etag ?? "none"}`,
@@ -252,7 +252,7 @@ class InternalTask implements DownloadEngineTask {
         updatedAt: Date.now(),
       };
       isResume = true;
-      this.bus.emit("log" as any, {
+      this.bus.emit("log", {
         taskId: this.id,
         level: "info",
         message: `Resuming session: ${RangePlanner.pendingChunks(session.chunks).length} chunk(s) remaining`,
@@ -279,7 +279,7 @@ class InternalTask implements DownloadEngineTask {
         updatedAt: Date.now(),
       };
       if (!capabilities.supportsRange) {
-        this.bus.emit("log" as any, {
+        this.bus.emit("log", {
           taskId: this.id,
           level: "warn",
           message:

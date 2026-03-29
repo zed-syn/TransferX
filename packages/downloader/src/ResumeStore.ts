@@ -20,6 +20,11 @@ import * as fs from "fs";
 import * as path from "path";
 import type { DownloadSession } from "./types.js";
 
+/** Returns true only for "file not found" errors. */
+function isENOENT(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
 export class ResumeStore {
   private readonly _dir: string;
 
@@ -41,12 +46,17 @@ export class ResumeStore {
     try {
       const raw = await fs.promises.readFile(p, "utf8");
       return JSON.parse(raw) as DownloadSession;
-    } catch {
-      // Try the .tmp recovery path
+    } catch (err) {
+      // Only swallow "file not found" or JSON corruption.
+      // Re-throw permission errors, disk errors, etc. so callers see real failures
+      // instead of silently falling back to stale recovery data.
+      if (!isENOENT(err) && !(err instanceof SyntaxError)) throw err;
+      // Try the .tmp recovery path (crash during rename leaves this behind)
       try {
         const raw = await fs.promises.readFile(p + ".tmp", "utf8");
         return JSON.parse(raw) as DownloadSession;
-      } catch {
+      } catch (tmpErr) {
+        if (!isENOENT(tmpErr) && !(tmpErr instanceof SyntaxError)) throw tmpErr;
         return null;
       }
     }

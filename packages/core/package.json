@@ -1,6 +1,6 @@
 {
   "name": "@transferx/core",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TransferX core engine — chunked upload state machine, retry logic, and events",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,3 +16,5 @@
     "typescript": "*"
   }
 }
+
+

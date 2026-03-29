@@ -6,7 +6,137 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.10.0] — 2025-07-20
+## [1.1.0] — 2026-03-29
+
+### Fixed (Phase 0 — Audit Blockers)
+
+- **P0 — Adaptive concurrency signal was wrong** (`UploadEngine`):
+  `scheduler.recordFailure()` was only called when a chunk exhausted its retry
+  budget (fatal). Under the new behaviour it is called on **every** retryable
+  failure attempt, meaning the adaptive algorithm now sees the full error rate
+  instead of ~1/maxAttempts of it. Without this fix, the scheduler was ~5× too
+  slow to react to network degradation.
+
+- **P0 — `ResumeStore.load()` caught all errors** (`@transferx/downloader`):
+  The bare `catch {}` blocks inside `load()` silently swallowed permission
+  errors, disk errors, and other unexpected exceptions — potentially returning
+  stale `.tmp` data when the real error was unrelated to a missing file.
+  Fixed to re-throw any error that is neither ENOENT nor a `SyntaxError`
+  (JSON corruption), matching the pattern established by `FileSessionStore`.
+
+- **P0 — `createHttpEngine()` missing from SDK** (`@transferx/sdk`):
+  The README documented this factory but the implementation was absent.
+  Added `createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle` matching
+  the existing `createB2Engine` / `createS3Engine` / `createR2Engine` pattern.
+
+- **P0 — Config layer lacked input validation** (`@transferx/core`):
+  `resolveEngineConfig()` now throws `RangeError` for invalid values:
+  `chunkSize < 1`, `concurrency.initial < 1`, `concurrency.min < 1`, and
+  `retry.maxAttempts < 1`. Adapter-specific minimums (e.g. B2/S3's 5 MiB
+  part floor) are still enforced inside each adapter's `initTransfer()` so
+  that test code can use small chunk sizes safely.
+
+- **P0 — `HttpAdapter.getRemoteState` was always present** (`@transferx/adapter-http`):
+  Even when `getRemoteStateFn` was not provided, the method existed on the
+  instance and threw on every resume attempt. The engine's guard
+  `if (!this._adapter.getRemoteState)` therefore always evaluated to false,
+  forcing every resume through an exception path. Fixed: `getRemoteState` is
+  now conditionally assigned in the constructor — only present when
+  `getRemoteStateFn` is configured.
+
+- **P0 — `"log" as any` type casts in `DownloadEngine`** (`@transferx/downloader`):
+  Three `this.bus.emit("log" as any, …)` calls bypassed the `DownloadEventBus`
+  type safety. Fixed by adding `log` to `DownloadEventMap`:
+  `{ taskId, level, message }`. The `as any` casts are removed.
+
+### Added (Phase 1 — Reliability)
+
+- **`TransferManager`** (`@transferx/core`) — global coordinator for multiple
+  concurrent upload sessions:
+  - `maxConcurrentUploads` cap (default: 4) with FIFO back-pressure queuing.
+  - `enqueue(session)` — start or queue an upload; returns Promise resolving to
+    the final `TransferSession`.
+  - `enqueueResume(sessionId)` — resume a persisted session with same queuing logic.
+  - `pauseAll()` / `resumeAll()` — synchronously pause/resume all active sessions.
+  - `cancelAll()` — rejects all queued promises and cancels all active sessions.
+  - `cancel(sessionId)` — cancel a single queued or active session by ID.
+  - `getStatus()` — lightweight snapshot: `activeUploads`, `queuedUploads`,
+    `maxConcurrentUploads`. No I/O.
+
+### Added (Phase 2 — Observability)
+
+- **`MetricsEngine`** (`@transferx/core`) — passive event-driven metrics collector:
+  - `attach(bus)` — subscribe to an `EventBus`; no instrumentation in hot path.
+  - `getSnapshot(sessionId)` — per-session `MetricsSnapshot`:
+    `bytesTransferred`, `chunksStarted`, `chunksCompleted`, `chunksFailed`,
+    `chunksFatal`, `retryCount`, `errorRate`, `avgChunkLatencyMs`,
+    `peakSpeedBytesPerSec`, `capturedAt`.
+  - `getAllSnapshots()` — all tracked sessions.
+  - `getAggregate()` — global aggregate across all sessions; includes
+    `sessionCount` and weighted `avgChunkLatencyMs`.
+  - `reset(sessionId?)` — clear specific or all sessions.
+  - `detach()` — unsubscribe all event listeners.
+
+### Added (Phase 3 — Performance)
+
+- **`recommendChunkSize(fileSizeBytes)`** (`@transferx/core`) — utility that
+  returns an optimal chunk size based on file size, balancing part count against
+  retry cost. Follows B2/S3 5 MiB minimum:
+
+  | File size     | Recommended chunk |
+  | ------------- | ----------------- |
+  | < 100 MiB     | 5 MiB             |
+  | 100 MiB–1 GiB | 10 MiB            |
+  | 1 GiB–10 GiB  | 25 MiB            |
+  | ≥ 10 GiB      | 50 MiB            |
+
+### Added (Phase 4 — Ecosystem)
+
+- **`HttpAdapter` / `createHttpAdapter`** now exported from `@transferx/sdk`.
+- **`HttpAdapterOptions`** type now exported from `@transferx/sdk`.
+- `createHttpEngine()` factory in SDK (see Phase 0 fix above).
+
+### Tests
+
+- Added 16 new tests (285 total across 17 suites):
+  - `transfermanager.test.ts` ×6: single upload, status counters, queuing order,
+    cancelAll, cancel-by-ID, concurrent-within-cap.
+  - `metrics.test.ts` ×10: attach/detach, byte tracking, fatal tracking, retry
+    counting, getAllSnapshots, getAggregate, reset (session + global), empty aggregate.
+- Updated `HttpAdapter.test.ts`: replaced "throws on missing getRemoteStateFn"
+  with "is undefined when not provided" and "is defined when provided" tests
+  to match the new conditional-assignment behaviour.
+
+---
+
+## [1.0.0] — 2026-01-15
+
+### Added
+
+- **`@transferx/adapter-http`** — generic callback-based adapter for custom
+  HTTP multipart endpoints. Does zero network I/O itself; all transport concerns
+  are delegated to caller-supplied `initFn`, `uploadFn`, `completeFn`,
+  `abortFn?`, and optional `getRemoteStateFn?`.
+- **`createHttpAdapter(opts)`** factory in `@transferx/adapter-http`.
+
+### Changed
+
+- **Adaptive concurrency is now fully implemented.** `ConcurrencyPolicy.adaptive`
+  (default: `true`) enables a sliding-window error-rate algorithm:
+  `errorRate > 30%` → scale down (floor: `min`);
+  `errorRate < 5%` for 10+ consecutive successes → scale up (ceiling: `max`).
+  All "NOT YET IMPLEMENTED" notices removed from the JSDoc.
+
+- All packages bumped to version **1.0.0** (first stable release).
+
+### Tests
+
+- Added 22 new tests (266 total, 15 suites):
+  - `scheduler.test.ts` +8: adaptive algorithm (plain number, scale-down,
+    min floor, scale-up, max ceiling, adaptive:false, cooldown, steady state).
+  - `HttpAdapter.test.ts` ×14: full lifecycle coverage.
+
+---
 
 ### Added
 

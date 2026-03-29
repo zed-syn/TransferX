@@ -160,22 +160,48 @@ describe("HttpAdapter.abortTransfer", () => {
 // ── getRemoteState ────────────────────────────────────────────────────────────
 
 describe("HttpAdapter.getRemoteState", () => {
+  it("is undefined when getRemoteStateFn is not provided", () => {
+    const opts = makeOptions(); // no getRemoteStateFn
+    const adapter = new HttpAdapter(opts);
+    // With the conditional assignment pattern, the method must not exist at all
+    // so the engine's `if (!this._adapter.getRemoteState)` guard correctly skips it.
+    expect(adapter.getRemoteState).toBeUndefined();
+  });
+
+  it("is defined when getRemoteStateFn is provided", () => {
+    const opts = makeOptions({
+      getRemoteStateFn: jest.fn().mockResolvedValue({ uploadedParts: [] }),
+    });
+    const adapter = new HttpAdapter(opts);
+    expect(typeof adapter.getRemoteState).toBe("function");
+  });
+
   it("delegates to getRemoteStateFn when provided", async () => {
     const state = { uploadedParts: [{ partNumber: 1, providerToken: "e1" }] };
-    const opts = makeOptions({
-      getRemoteStateFn: jest.fn().mockResolvedValue(state),
-    });
+    const getRemoteStateFn = jest.fn().mockResolvedValue(state);
+    const opts = makeOptions({ getRemoteStateFn });
     const adapter = new HttpAdapter(opts);
     const result = await adapter.getRemoteState!(makeSession());
     expect(result).toEqual(state);
-    expect(opts.getRemoteStateFn).toHaveBeenCalledTimes(1);
+    expect(getRemoteStateFn).toHaveBeenCalledTimes(1);
   });
 
-  it("throws when getRemoteStateFn is not configured", async () => {
-    const opts = makeOptions(); // no getRemoteStateFn
+  it("passes the session to getRemoteStateFn", async () => {
+    const getRemoteStateFn = jest.fn().mockResolvedValue({ uploadedParts: [] });
+    const opts = makeOptions({ getRemoteStateFn });
+    const adapter = new HttpAdapter(opts);
+    const session = makeSession({ providerSessionId: "upload-abc" });
+    await adapter.getRemoteState!(session);
+    expect(getRemoteStateFn).toHaveBeenCalledWith(session);
+  });
+
+  it("propagates rejection from getRemoteStateFn", async () => {
+    const opts = makeOptions({
+      getRemoteStateFn: jest.fn().mockRejectedValue(new Error("remote error")),
+    });
     const adapter = new HttpAdapter(opts);
     await expect(adapter.getRemoteState!(makeSession())).rejects.toThrow(
-      /getRemoteStateFn is not configured/,
+      "remote error",
     );
   });
 });

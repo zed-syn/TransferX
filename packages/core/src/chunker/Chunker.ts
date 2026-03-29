@@ -101,6 +101,39 @@ export function validateChunks(
   }
 }
 
+// ── Smart chunk sizing ────────────────────────────────────────────────────────
+
+/**
+ * Recommend an optimal chunk size for a given file size.
+ *
+ * Balances two competing concerns:
+ *   1. Minimise the total number of parts (each part = one HTTP round trip with
+ *      overhead). B2 and S3 both support up to 10,000 parts; large files with
+ *      tiny chunks exhaust this.
+ *   2. Keep individual chunks small enough whose retry cost doesn't dominate.
+ *      A 500 MiB chunk that fails at byte 499 must be re-sent in full.
+ *
+ * The returned sizes meet the B2/S3 minimum part size (5 MiB) except when
+ * explicitly overriding for tests (see `overrides`).
+ *
+ * | File size     | Chunk size | Max parts (at this size) |
+ * |---------------|------------|--------------------------|
+ * | < 100 MiB     | 5 MiB      | 20                       |
+ * | 100 MiB–1 GiB | 10 MiB     | 102                      |
+ * | 1 GiB–10 GiB  | 25 MiB     | 410                      |
+ * | > 10 GiB      | 50 MiB     | up to 2,048 (per 100 GiB)|
+ *
+ * @param fileSizeBytes  - Total size of the file in bytes.
+ * @returns                Recommended chunk size in bytes.
+ */
+export function recommendChunkSize(fileSizeBytes: number): number {
+  const MiB = 1024 * 1024;
+  if (fileSizeBytes < 100 * MiB) return 5 * MiB; // < 100 MiB
+  if (fileSizeBytes < 1024 * MiB) return 10 * MiB; // 100 MiB – 1 GiB
+  if (fileSizeBytes < 10 * 1024 * MiB) return 25 * MiB; // 1 GiB – 10 GiB
+  return 50 * MiB; // ≥ 10 GiB
+}
+
 // ── IChunkReader — platform-agnostic chunk data access ───────────────────────
 
 /**

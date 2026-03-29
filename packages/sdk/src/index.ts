@@ -370,6 +370,83 @@ export function createR2Engine(opts: CreateR2EngineOptions): EngineHandle {
   };
 }
 
+// ── Re-export HTTP adapter ────────────────────────────────────────────────────
+
+export { HttpAdapter, createHttpAdapter } from "@transferx/adapter-http";
+export type { HttpAdapterOptions } from "@transferx/adapter-http";
+
+// ── Generic HTTP upload factory ────────────────────────────────────────────────
+
+import { HttpAdapter } from "@transferx/adapter-http";
+import type { HttpAdapterOptions } from "@transferx/adapter-http";
+
+export interface CreateHttpEngineOptions {
+  /**
+   * Callback functions that implement the HTTP upload protocol.
+   * All network/credential concerns are entirely the responsibility of these
+   * caller-supplied implementations — the SDK never inspects the payloads.
+   */
+  http: HttpAdapterOptions;
+  /** Partial engine config — missing fields use defaults (10 MiB chunks, 4 concurrent, 5 retries). */
+  config?: Partial<EngineConfig>;
+  /**
+   * Session store. Defaults to in-memory.
+   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   */
+  store?: ISessionStore;
+  /**
+   * File-stat callback for change detection on resume.
+   * @see {@link CreateB2EngineOptions.fileStatFn}
+   */
+  fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+}
+
+/**
+ * Create a fully-wired UploadEngine backed by custom HTTP callbacks.
+ * Use this when you have your own multipart upload API and don't need a
+ * dedicated adapter (B2/S3/R2).
+ *
+ * @example
+ * ```typescript
+ * import { createHttpEngine, makeUploadSession } from '@transferx/sdk';
+ *
+ * const { upload, bus, config } = createHttpEngine({
+ *   http: {
+ *     initFn:     async (session) => myApi.createUpload(session.targetKey),
+ *     uploadFn:   async (session, chunk, data) => myApi.uploadPart(session.providerSessionId!, chunk.index + 1, data),
+ *     completeFn: async (session, chunks) => myApi.completeUpload(session.providerSessionId!, chunks),
+ *     abortFn:    async (session) => myApi.abortUpload(session.providerSessionId!),
+ *   },
+ * });
+ * ```
+ */
+export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
+  const config = resolveEngineConfig(opts.config ?? {});
+  const bus = new EventBus();
+  const store = opts.store ?? new MemorySessionStore();
+  const adapter = new HttpAdapter(opts.http);
+
+  const engine = new UploadEngine({
+    adapter,
+    store,
+    bus,
+    config: opts.config ?? {},
+    ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
+  });
+
+  return {
+    upload: engine.upload.bind(engine),
+    resumeSession: engine.resumeSession.bind(engine),
+    pause: engine.pause.bind(engine),
+    resumeScheduler: engine.resumeScheduler.bind(engine),
+    cancel: engine.cancel.bind(engine),
+    getSession: engine.getSession.bind(engine),
+    bus,
+    config,
+    store,
+  };
+}
+
 // ── HTTP Downloader factory ───────────────────────────────────────────────────
 
 import { DownloadEngine, DownloadTask } from "@transferx/downloader";

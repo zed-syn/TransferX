@@ -190,6 +190,12 @@ export type DownloadEventMap = {
   resume: { taskId: string };
   completed: { taskId: string; session: DownloadSession };
   cancelled: { taskId: string };
+  /** Structured log event emitted by the engine for diagnostics. */
+  log: {
+    taskId: string;
+    level: "debug" | "info" | "warn" | "error";
+    message: string;
+  };
 };
 
 export type DownloadEventType = keyof DownloadEventMap;

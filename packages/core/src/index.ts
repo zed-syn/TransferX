@@ -55,7 +55,11 @@ export {
 } from "./types/errors.js";
 
 // Chunker
-export { computeChunks, validateChunks } from "./chunker/Chunker.js";
+export {
+  computeChunks,
+  validateChunks,
+  recommendChunkSize,
+} from "./chunker/Chunker.js";
 export type { IChunkReader } from "./chunker/Chunker.js";
 export { NodeChunkReader } from "./chunker/NodeChunkReader.js";
 
@@ -89,3 +93,14 @@ export { EventBus } from "./events/EventBus.js";
 // Engine
 export { UploadEngine, makeUploadSession } from "./engine/UploadEngine.js";
 export type { UploadEngineOptions } from "./engine/UploadEngine.js";
+
+// Transfer Manager
+export { TransferManager } from "./manager/TransferManager.js";
+export type {
+  TransferManagerOptions,
+  TransferManagerStatus,
+} from "./manager/TransferManager.js";
+
+// Metrics
+export { MetricsEngine } from "./metrics/MetricsEngine.js";
+export type { MetricsSnapshot } from "./metrics/MetricsEngine.js";

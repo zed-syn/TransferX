@@ -512,6 +512,10 @@ export class UploadEngine {
               c.retries++;
               c.lastError = error.message;
               c.lastFailedAt = Date.now();
+              // Signal adaptive concurrency on every retryable failure, not just the final
+              // fatal one. Without this the adaptive algorithm sees ~1/maxAttempts of the
+              // real error rate and reacts 5× too slowly under network degradation.
+              scheduler.recordFailure();
               this._bus.emit({
                 type: "chunk:failed",
                 session,

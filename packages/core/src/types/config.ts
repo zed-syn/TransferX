@@ -116,7 +116,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
 export function resolveEngineConfig(
   partial: Partial<EngineConfig>,
 ): EngineConfig {
-  return {
+  const resolved: EngineConfig = {
     ...DEFAULT_ENGINE_CONFIG,
     ...partial,
     retry: { ...DEFAULT_ENGINE_CONFIG.retry, ...partial.retry },
@@ -125,4 +125,30 @@ export function resolveEngineConfig(
       ...partial.concurrency,
     },
   };
+
+  // Basic sanity validation — catches obvious misconfigurations early.
+  // Note: the B2/S3 5 MiB minimum is enforced inside each adapter's
+  // initTransfer() so that tests can use small chunk sizes safely.
+  if (!Number.isInteger(resolved.chunkSize) || resolved.chunkSize < 1) {
+    throw new RangeError(
+      `chunkSize must be a positive integer. Got: ${resolved.chunkSize}`,
+    );
+  }
+  if (resolved.concurrency.initial < 1) {
+    throw new RangeError(
+      `concurrency.initial must be >= 1. Got: ${resolved.concurrency.initial}`,
+    );
+  }
+  if (resolved.concurrency.min < 1) {
+    throw new RangeError(
+      `concurrency.min must be >= 1. Got: ${resolved.concurrency.min}`,
+    );
+  }
+  if (resolved.retry.maxAttempts < 1) {
+    throw new RangeError(
+      `retry.maxAttempts must be >= 1. Got: ${resolved.retry.maxAttempts}`,
+    );
+  }
+
+  return resolved;
 }
