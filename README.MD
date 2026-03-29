@@ -2,12 +2,12 @@
 
 ![npm](https://img.shields.io/npm/v/@transferx/sdk)
 ![license](https://img.shields.io/github/license/zed-syn/TransferX)
-![tests](https://img.shields.io/badge/tests-215_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-244_passed-brightgreen)
 
 Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability — retries, resumability, observability, and pluggable storage backends.
 
 ```
-13 test suites · 215 tests · 0 compile errors
+14 test suites · 244 tests · 0 compile errors
 ```
 
 ---
@@ -15,6 +15,7 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 ## Features
 
 - **Chunked multipart upload** — splits files into configurable chunks, uploads them in parallel
+- **Parallel HTTP downloads** — IDM-class range downloads, adaptive concurrency, byte-level crash resume
 - **Retry with full-jitter backoff** — exponential backoff per chunk, rate-limit aware (HTTP 429)
 - **Resumable sessions** — sessions are persisted to disk; resume after crash with zero data loss
 - **Live progress events** — EMA-smoothed speed, ETA, bytes/s, percent on a typed event bus
@@ -26,12 +27,13 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 
 ## Packages
 
-| Package                 | Description                                                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `@transferx/sdk`        | **Start here.** High-level façade — `createB2Engine()`, `createS3Engine()`, `createR2Engine()` |
-| `@transferx/core`       | Engine, scheduler, retry, progress, stores, types                                              |
-| `@transferx/adapter-b2` | Backblaze B2 Native API adapter                                                                |
-| `@transferx/adapter-s3` | AWS S3 and Cloudflare R2 multipart upload adapter                                              |
+| Package                 | Description                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `@transferx/sdk`        | **Start here.** High-level façade — `createB2Engine()`, `createS3Engine()`, `createR2Engine()`, `createDownloader()` |
+| `@transferx/core`       | Engine, scheduler, retry, progress, stores, types                                                                    |
+| `@transferx/adapter-b2` | Backblaze B2 Native API adapter                                                                                      |
+| `@transferx/adapter-s3` | AWS S3 and Cloudflare R2 multipart upload adapter                                                                    |
+| `@transferx/downloader` | IDM-class parallel HTTP download engine with crash resume                                                            |
 
 ---
 
@@ -562,8 +564,7 @@ Log events are emitted for:
 ┌─────────────────────────────────────────────────────┐
 │                   @transferx/sdk                    │
 │  createB2Engine()  ·  createS3Engine()              │
-│  createR2Engine()  ·  makeUploadSession()           │
-└───────────────────────┬─────────────────────────────┘
+│  createR2Engine()  ·  makeUploadSession()           ││  createDownloader()                               │└───────────────────────┬─────────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────────┐
 │                  UploadEngine                       │
@@ -603,23 +604,24 @@ npx jest --testPathPattern="engine" --runInBand
 
 ### Test suites
 
-| Suite                  | Tests | Coverage                                              |
-| ---------------------- | ----- | ----------------------------------------------------- |
-| `chunk.test.ts`        | 8     | ChunkMeta invariants                                  |
-| `session.test.ts`      | 37    | State machine, transitions                            |
-| `chunker.test.ts`      | 14    | File splitting edge cases                             |
-| `scheduler.test.ts`    | 11    | Concurrency, pause/resume, drain                      |
-| `retry.test.ts`        | 11    | Backoff, non-retryable fast-fail                      |
-| `progress.test.ts`     | 13    | EMA speed, ETA, interval emission                     |
-| `store.memory.test.ts` | 14    | CRUD, deep-clone isolation                            |
-| `store.file.test.ts`   | 12    | Atomic writes, corruption guard                       |
-| `eventbus.test.ts`     | 20    | on/off/emit/clear, dispatch safety, handler isolation |
-| `engine.test.ts`       | 40    | Full upload lifecycle, checksumVerify, log events     |
-| `resume.test.ts`       | 21    | Resume, cancel, reconcile, file-change detection      |
-| `B2Adapter.test.ts`    | 18    | Mock-fetch B2 lifecycle, auth retry, HTTP timeout     |
-| `S3Adapter.test.ts`    | 30    | S3/R2 lifecycle, resume, error mapping, HTTP timeout  |
+| Suite                  | Tests | Coverage                                                                           |
+| ---------------------- | ----- | ---------------------------------------------------------------------------------- |
+| `chunk.test.ts`        | 8     | ChunkMeta invariants                                                               |
+| `session.test.ts`      | 37    | State machine, transitions                                                         |
+| `chunker.test.ts`      | 14    | File splitting edge cases                                                          |
+| `scheduler.test.ts`    | 11    | Concurrency, pause/resume, drain                                                   |
+| `retry.test.ts`        | 11    | Backoff, non-retryable fast-fail                                                   |
+| `progress.test.ts`     | 13    | EMA speed, ETA, interval emission                                                  |
+| `store.memory.test.ts` | 14    | CRUD, deep-clone isolation                                                         |
+| `store.file.test.ts`   | 12    | Atomic writes, corruption guard                                                    |
+| `eventbus.test.ts`     | 20    | on/off/emit/clear, dispatch safety, handler isolation                              |
+| `engine.test.ts`       | 40    | Full upload lifecycle, checksumVerify, log events                                  |
+| `resume.test.ts`       | 21    | Resume, cancel, reconcile, file-change detection                                   |
+| `B2Adapter.test.ts`    | 18    | Mock-fetch B2 lifecycle, auth retry, HTTP timeout                                  |
+| `S3Adapter.test.ts`    | 30    | S3/R2 lifecycle, resume, error mapping, HTTP timeout                               |
+| `downloader.test.ts`   | 29    | RangePlanner, FileWriter, RetryEngine, ProgressEngine, ChunkScheduler, integration |
 
-**Total: 215 tests**
+**Total: 244 tests**
 
 ---
 
@@ -629,6 +631,7 @@ npx jest --testPathPattern="engine" --runInBand
 packages/
   core/          – @transferx/core  (engine + all primitives)
   sdk/           – @transferx/sdk   (public entry point)
+  downloader/    – @transferx/downloader  (parallel HTTP download engine)
   adapters/
     b2/          – @transferx/adapter-b2
     s3/          – @transferx/adapter-s3  (S3 + R2)
@@ -638,6 +641,51 @@ examples/
 docs/
   index.html     – Full API documentation
 ```
+
+---
+
+## Download a File
+
+### Install
+
+```bash
+npm install @transferx/sdk
+```
+
+### Download with progress
+
+```typescript
+import { createDownloader } from "@transferx/sdk";
+
+const task = createDownloader({
+  url: "https://example.com/large-file.zip",
+  outputPath: "/tmp/large-file.zip",
+});
+
+task.on("progress", (p) => {
+  const pct = p.percent?.toFixed(1) ?? "?";
+  const mbps = (p.speedBytesPerSec / 1024 / 1024).toFixed(1);
+  process.stdout.write(`\r${pct}%  ${mbps} MB/s`);
+});
+
+await task.start();
+console.log("\nDone!");
+```
+
+### Pause / Resume / Cancel
+
+```typescript
+const task = createDownloader({ url, outputPath });
+const done = task.start();
+
+task.pause();
+task.resume();
+await task.cancel(); // persists a resumable session to disk
+
+// On next launch with same url + outputPath, start() resumes automatically
+```
+
+> See [`packages/downloader/README.md`](packages/downloader/README.md) for the full API reference.
 
 ---
 

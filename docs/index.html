@@ -725,7 +725,7 @@
         </div>
         <div class="logo-text">
           <strong>TransferX</strong>
-          <span>v0.1.0-alpha</span>
+          <span>v0.1.1</span>
         </div>
         <button
           class="theme-toggle"
@@ -826,12 +826,21 @@
               <code>@aws-sdk/client-s3</code> v3.
             </div>
           </div>
+          <div class="pkg-card" style="border-color: var(--green-bdr)">
+            <div class="name">@transferx/downloader</div>
+            <div class="desc">
+              IDM-class parallel HTTP download engine. Range requests,
+              byte-level crash resume, adaptive concurrency, and EMA-smoothed
+              progress. Use <code>createDownloader()</code> from
+              <code>@transferx/sdk</code>.
+            </div>
+          </div>
         </div>
 
         <div class="callout info">
           <strong>Production-ready</strong>
           All packages are published to npm. Production deployments should pin
-          to an exact version (e.g. <code>"@transferx/sdk": "0.1.2"</code>).
+          to an exact version (e.g. <code>"@transferx/sdk": "0.1.3"</code>).
           Semver patch releases are backwards-compatible; minor releases may add
           new exports.
         </div>
