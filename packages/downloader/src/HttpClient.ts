@@ -55,7 +55,8 @@ export interface ConnectionStats {
   /** Total number of requests dispatched. */
   requests: number;
   /**
-   * Fraction of requests that reused an existing connection (0–1).
+   * Fraction of requests that found a warm idle socket at dispatch time (0–1).
+   * Measured by checking pool.stats.free > 0 before each undici dispatch.
    * Always 0 for FetchHttpClient (no persistent connections).
    */
   reuseRate: number;
@@ -63,6 +64,31 @@ export interface ConnectionStats {
   pooled: boolean;
   /** Origin managed by this pool (PooledHttpClient only). */
   origin?: string;
+  /** Current active-concurrency limit after adaptive tuning. Pool-only. */
+  activeConnections?: number;
+  /** Original max-connections cap (≤ 8). Pool-only. */
+  maxConnections?: number;
+  /** Whether HTTP/2 (ALPN h2) negotiation is enabled for this pool. Pool-only. */
+  http2?: boolean;
+  /** Rolling error rate over the last measurement window (0–1). Pool-only. */
+  errorRate?: number;
+}
+
+/** Configuration options for PooledHttpClient. */
+export interface PooledHttpClientOptions {
+  /**
+   * HTTP/1.1 pipelining depth per socket.
+   * 2–4 saturates bandwidth without head-of-line stalls on most CDNs.
+   * Ignored when HTTP/2 is negotiated (streams are natively multiplexed).
+   * Default: 2.
+   */
+  pipelining?: number;
+  /**
+   * Enable HTTP/2 via ALPN negotiation.
+   * When true, undici upgrades to h2 if the server advertises it.
+   * Default: true for https: origins, false for http:.
+   */
+  allowH2?: boolean;
 }
 
 export interface IHttpClient {
@@ -152,12 +178,17 @@ export function isUndiciAvailable(): boolean {
 /**
  * HTTP client backed by an undici.Pool.
  *
- * A single pool instance is shared across ALL chunk requests for one download:
- *   - Keep-alive sockets are handed back to the pool after each range response
- *     and immediately available for the next chunk.
- *   - TCP + TLS handshake is paid once to fill the pool to `connections` sockets.
- *   - All N parallel chunk downloads reuse those same sockets.
- *   - pipelining: 1 — safe with all HTTP/1.1 servers (no head-of-line blocking).
+ * Performance strategy:
+ *   - connections = min(requested, 8): caps at typical CDN per-IP limit.
+ *   - pipelining = 2 (configurable): two in-flight requests per socket without
+ *     head-of-line blocking — doubles effective throughput vs pipelining=1.
+ *   - allowH2 = true for https: — ALPN upgrades to HTTP/2 multiplexing;
+ *     single connection then handles all concurrent chunk streams.
+ *   - Adaptive _Sem: a runtime semaphore mirrors pool capacity and shrinks by
+ *     25 % (floor 2) on error-rate > 30 %, recovering +1 per success-run.
+ *     No pool rebuild needed — just rate-limits new dispatches.
+ *   - Real reuseRate: pool.stats.free is sampled before each dispatch;
+ *     free > 0 means an idle socket was available (genuine warm reuse).
  *
  * Lifecycle:
  *   created in InternalTask.start() → used across all chunk fetches → closed
@@ -167,37 +198,58 @@ export class PooledHttpClient implements IHttpClient {
   private readonly _origin: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly _pool: any; // undici.Pool — typed as any to avoid hard dep on undici types
+  private readonly _sem: _Sem;
+  private readonly _maxConn: number;
+  private readonly _http2: boolean;
+
   private _requestCount = 0;
-  private _reuseCount = 0;
+  private _socketReuseCount = 0; // requests that found a warm idle socket
+
+  // Circular error-rate window — 16 slots, each 0 = ok / 1 = error.
+  private static readonly _WIN = 16;
+  private readonly _errWin = new Uint8Array(PooledHttpClient._WIN); // all zeros
+  private _errIdx = 0;
+  private _errSum = 0; // running sum of 1-bits in the window
 
   /**
    * @param origin       Scheme + host + port, e.g. "https://example.com"
-   * @param connections  Pool capacity (set equal to concurrency.max so every
-   *                     in-flight chunk can have its own socket).
+   * @param connections  Desired pool capacity. Capped at 8 internally to match
+   *                     typical CDN per-IP connection limits.
+   * @param opts         Optional tuning: pipelining depth, HTTP/2 toggle.
    */
-  constructor(origin: string, connections: number) {
+  constructor(origin: string, connections: number, opts?: PooledHttpClientOptions) {
     if (!UndiciPool) {
       throw new Error(
         "undici is not installed. Add it as a dependency: npm install undici",
       );
     }
+    const n = Math.min(Math.max(1, connections), 8); // 1 ≤ n ≤ 8
+    this._maxConn = n;
     this._origin = origin;
+    this._http2 = opts?.allowH2 ?? origin.startsWith("https:");
     this._pool = new UndiciPool(origin, {
-      connections,
-      pipelining: 1, // safe for all HTTP/1.1 servers
-      keepAliveTimeout: 4_000, // keep socket warm between chunks
-      keepAliveMaxTimeout: 600_000, // allow multi-minute downloads to reuse
+      connections: n,
+      pipelining: opts?.pipelining ?? 2, // sweet-spot: fills pipe without HOL stalls
+      allowH2: this._http2,              // ALPN h2 negotiation for HTTPS origins
+      keepAliveTimeout: 4_000,           // keep socket warm between chunks
+      keepAliveMaxTimeout: 600_000,      // allow multi-minute downloads to reuse
     }) as import("undici").Pool;
+    this._sem = new _Sem(n); // mirrors pool capacity; shrinks/grows via adaptive tuning
   }
 
   async request(
     url: string,
     opts: IHttpRequestOptions,
   ): Promise<IHttpResponse> {
-    // Count reuses: every request after the first benefits from pooling.
-    const isReuse = this._requestCount > 0;
+    // Adaptive semaphore: may be reduced below _maxConn on error spikes.
+    await this._sem.acquire();
+
+    // Sample free (idle) sockets BEFORE dispatching the request.
+    // If pool.stats.free > 0 the request grabs a warm socket — genuine reuse.
+    // After dispatch the pool decrements free internally, so we must read it first.
+    const freeAtDispatch = (this._pool.stats as { free: number }).free;
     this._requestCount++;
-    if (isReuse) this._reuseCount++;
+    if (freeAtDispatch > 0) this._socketReuseCount++;
 
     const parsed = new URL(url);
     const path = parsed.pathname + (parsed.search || "");
@@ -211,29 +263,42 @@ export class PooledHttpClient implements IHttpClient {
     if (opts.headers !== undefined) reqOpts["headers"] = opts.headers;
     if (opts.signal !== undefined) reqOpts["signal"] = opts.signal;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const { statusCode, headers, body } = await this._pool.request(reqOpts);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const { statusCode, headers, body } = await this._pool.request(reqOpts);
 
-    const headerMap = _flattenHeaders(
-      headers as Record<string, string | string[] | undefined>,
-    );
+      // HTTP 5xx counts as an error for adaptive-tuning purposes.
+      this._recordOutcome((statusCode as number) >= 500);
 
-    // undici body is a Node.js Readable; convert to WHATWG ReadableStream.
-    // Readable.toWeb() is available from Node.js 17+ (our minimum is 18).
-    const webBody: ReadableStream<Uint8Array> | null = body
-      ? (Readable.toWeb(body as Readable) as ReadableStream<Uint8Array>)
-      : null;
+      const headerMap = _flattenHeaders(
+        headers as Record<string, string | string[] | undefined>,
+      );
 
-    return {
-      status: statusCode as number,
-      header: (name) => headerMap.get(name.toLowerCase()) ?? null,
-      body: webBody,
-      cancel: async () => {
-        // Destroy the underlying Node.js Readable to release the socket
-        // back to the pool without draining the full body.
-        (body as Readable | undefined)?.destroy();
-      },
-    };
+      // undici body is a Node.js Readable; convert to WHATWG ReadableStream.
+      // Readable.toWeb() is available from Node.js 17+ (our minimum is 18).
+      const webBody: ReadableStream<Uint8Array> | null = body
+        ? (Readable.toWeb(body as Readable) as ReadableStream<Uint8Array>)
+        : null;
+
+      return {
+        status: statusCode as number,
+        header: (name) => headerMap.get(name.toLowerCase()) ?? null,
+        body: webBody,
+        cancel: async () => {
+          // Destroy the underlying Node.js Readable to release the socket
+          // back to the pool without draining the full body.
+          (body as Readable | undefined)?.destroy();
+        },
+      };
+    } catch (err) {
+      // Network-level failure (ECONNRESET, DNS, timeout) — count as error.
+      this._recordOutcome(true);
+      throw err;
+    } finally {
+      // Release the semaphore as soon as headers arrive (or request fails).
+      // The socket stays busy reading the body — that is managed by undici.
+      this._sem.release();
+    }
   }
 
   async close(): Promise<void> {
@@ -241,13 +306,39 @@ export class PooledHttpClient implements IHttpClient {
   }
 
   stats(): ConnectionStats {
+    const n = Math.min(this._requestCount, PooledHttpClient._WIN);
     return {
       requests: this._requestCount,
       reuseRate:
-        this._requestCount > 1 ? this._reuseCount / this._requestCount : 0,
+        this._requestCount > 0 ? this._socketReuseCount / this._requestCount : 0,
       pooled: true,
       origin: this._origin,
+      activeConnections: this._sem.limit,
+      maxConnections: this._maxConn,
+      http2: this._http2,
+      errorRate: n > 0 ? this._errSum / n : 0,
     };
+  }
+
+  /** Update rolling error window and adjust semaphore limit accordingly. */
+  private _recordOutcome(isError: boolean): void {
+    const old = this._errWin[this._errIdx];
+    const neu = isError ? 1 : 0;
+    this._errSum = this._errSum - (old ?? 0) + neu;
+    this._errWin[this._errIdx] = neu;
+    this._errIdx = (this._errIdx + 1) % PooledHttpClient._WIN;
+
+    // Use actual sample count until the window fills to avoid cold-start bias.
+    const sampleN = Math.min(this._requestCount, PooledHttpClient._WIN);
+    const rate = sampleN > 0 ? this._errSum / sampleN : 0;
+
+    if (isError && rate > 0.3) {
+      // Error spike — back off concurrency by 25 %, floor at 2.
+      this._sem.limit = Math.max(2, Math.floor(this._sem.limit * 0.75));
+    } else if (!isError && rate < 0.1 && this._sem.limit < this._maxConn) {
+      // Sustained success — recover one step toward the original cap.
+      this._sem.limit = Math.min(this._maxConn, this._sem.limit + 1);
+    }
   }
 }
 
@@ -278,6 +369,56 @@ export function createHttpClient(
     return new PooledHttpClient(origin, maxConnections);
   }
   return new FetchHttpClient();
+}
+
+// ─── Internal: adaptive concurrency semaphore ───────────────────────────────
+
+/**
+ * Lightweight permit-based semaphore with a mutable limit.
+ *
+ * PooledHttpClient uses this to throttle concurrent undici dispatches without
+ * rebuilding the pool. Raising or lowering `limit` takes effect immediately:
+ * raising unblocks queued waiters; lowering starves new acquires until running
+ * count drops below the new limit.
+ */
+class _Sem {
+  private _n: number;
+  private _running = 0;
+  private readonly _q: Array<() => void> = [];
+
+  constructor(limit: number) {
+    this._n = Math.max(1, limit);
+  }
+
+  get limit(): number {
+    return this._n;
+  }
+
+  set limit(v: number) {
+    this._n = Math.max(1, v);
+    this._flush(); // unblock queued waiters if limit was raised
+  }
+
+  acquire(): Promise<void> {
+    if (this._running < this._n) {
+      this._running++;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => this._q.push(resolve));
+  }
+
+  release(): void {
+    this._running--;
+    this._flush();
+  }
+
+  private _flush(): void {
+    while (this._running < this._n && this._q.length > 0) {
+      this._running++;
+      const resolve = this._q.shift();
+      resolve?.();
+    }
+  }
 }
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
