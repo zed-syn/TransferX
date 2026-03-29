@@ -2,7 +2,13 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "declarationDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "paths": {}
   },
-  "include": ["src/**/*", "__tests__/**/*"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["**/__tests__/**", "dist"]
 }

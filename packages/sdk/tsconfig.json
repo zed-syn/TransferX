@@ -3,8 +3,8 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "declarationDir": "dist"
+    "declarationDir": "dist",
+    "paths": {}
   },
-  "include": ["src/**/*.ts"],
-  "references": [{ "path": "../core" }, { "path": "../adapters/b2" }]
+  "include": ["src/**/*.ts"]
 }
