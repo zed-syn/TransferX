@@ -1,0 +1,48 @@
+{
+  "name": "transferx",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Enterprise-grade chunked transfer SDK",
+  "workspaces": [
+    "packages/*",
+    "packages/adapters/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint packages --ext .ts",
+    "typecheck": "tsc --noEmit -p tsconfig.base.json"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^22.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.3",
+    "typescript": "^5.5.3"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "rootDir": ".",
+    "testMatch": [
+      "<rootDir>/packages/**/__tests__/**/*.test.ts"
+    ],
+    "globals": {
+      "ts-jest": {
+        "tsconfig": "<rootDir>/tsconfig.base.json"
+      }
+    },
+    "moduleNameMapper": {
+      "^@transferx/core$": "<rootDir>/packages/core/src/index.ts",
+      "^@transferx/adapter-b2$": "<rootDir>/packages/adapters/b2/src/index.ts",
+      "^@transferx/adapter-http$": "<rootDir>/packages/adapters/http/src/index.ts",
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "collectCoverageFrom": [
+      "packages/*/src/**/*.ts",
+      "packages/adapters/*/src/**/*.ts"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "example-node-b2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Example: upload a local file to Backblaze B2 using @transferx/sdk",
+  "main": "src/upload.ts",
+  "scripts": {
+    "start": "npx ts-node -e require -p '../../tsconfig.base.json' src/upload.ts"
+  },
+  "dependencies": {
+    "@transferx/sdk": "*"
+  }
+}
