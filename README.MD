@@ -2,12 +2,12 @@
 
 ![npm](https://img.shields.io/npm/v/@transferx/sdk)
 ![license](https://img.shields.io/github/license/zed-syn/TransferX)
-![tests](https://img.shields.io/badge/tests-244_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-266_passed-brightgreen)
 
 Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability — retries, resumability, observability, and pluggable storage backends.
 
 ```
-14 test suites · 244 tests · 0 compile errors
+16 test suites · 266 tests · 0 compile errors
 ```
 
 ---
@@ -19,7 +19,8 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 - **Retry with full-jitter backoff** — exponential backoff per chunk, rate-limit aware (HTTP 429)
 - **Resumable sessions** — sessions are persisted to disk; resume after crash with zero data loss
 - **Live progress events** — EMA-smoothed speed, ETA, bytes/s, percent on a typed event bus
-- **Pluggable adapters** — Backblaze B2 included; implement `ITransferAdapter` for any provider
+- **Pluggable adapters** — B2, S3/R2, and generic HTTP adapters included; implement `ITransferAdapter` for any provider
+- **Adaptive concurrency** — sliding-window error-rate tracking automatically scales parallel chunks between `min` and `max`
 - **Strict TypeScript** — `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`
 - **Zero runtime dependencies** in `@transferx/core`
 
@@ -27,13 +28,14 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 
 ## Packages
 
-| Package                 | Description                                                                                                          |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `@transferx/sdk`        | **Start here.** High-level façade — `createB2Engine()`, `createS3Engine()`, `createR2Engine()`, `createDownloader()` |
-| `@transferx/core`       | Engine, scheduler, retry, progress, stores, types                                                                    |
-| `@transferx/adapter-b2` | Backblaze B2 Native API adapter                                                                                      |
-| `@transferx/adapter-s3` | AWS S3 and Cloudflare R2 multipart upload adapter                                                                    |
-| `@transferx/downloader` | IDM-class parallel HTTP download engine with crash resume                                                            |
+| Package                   | Description                                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `@transferx/sdk`          | **Start here.** High-level façade — `createB2Engine()`, `createS3Engine()`, `createR2Engine()`, `createHttpEngine()`, `createDownloader()` |
+| `@transferx/core`         | Engine, scheduler, retry, progress, stores, types                                                                                |
+| `@transferx/adapter-b2`   | Backblaze B2 Native API adapter                                                                                                  |
+| `@transferx/adapter-s3`   | AWS S3 and Cloudflare R2 multipart upload adapter                                                                                |
+| `@transferx/adapter-http` | Generic callback-based HTTP adapter — works with any custom multipart endpoint                                                   |
+| `@transferx/downloader`   | IDM-class parallel HTTP download engine with crash resume                                                                        |
 
 ---
 
@@ -65,7 +67,7 @@ const { upload, bus, config, store } = createB2Engine({
   store: new FileSessionStore("./.transferx-sessions"),
   config: {
     chunkSize: 10 * 1024 * 1024, // 10 MiB per chunk
-    concurrency: { initial: 4 }, // min/max/adaptive stored but not yet effective
+    concurrency: { initial: 4, min: 1, max: 16, adaptive: true },
   },
 });
 
@@ -216,12 +218,12 @@ const result = await upload(session);
 
 ### `ConcurrencyPolicy`
 
-| Field      | Default | Description                                            |
-| ---------- | ------- | ------------------------------------------------------ |
-| `initial`  | `4`     | Fixed concurrency — the only field currently in effect |
-| `min`      | `1`     | ⚠️ NOT YET IMPLEMENTED — stored but has no effect      |
-| `max`      | `16`    | ⚠️ NOT YET IMPLEMENTED — stored but has no effect      |
-| `adaptive` | `true`  | ⚠️ NOT YET IMPLEMENTED — stored but has no effect      |
+| Field      | Default | Description                                                                                                      |
+| ---------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `initial`  | `4`     | Starting concurrency. When `adaptive` is false this is fixed for the entire upload.                              |
+| `min`      | `1`     | Floor — the scheduler will not scale below this value even under sustained high error rates.                     |
+| `max`      | `16`    | Ceiling — the scheduler will not scale above this value even under sustained low error rates.                    |
+| `adaptive` | `true`  | Enable adaptive concurrency. Tracks a 20-chunk sliding window; scales down if errorRate > 30%, up if < 5%.      |
 
 ### `B2AdapterOptions` (via `createB2Engine({ b2: { … } })`)
 
@@ -579,7 +581,7 @@ Log events are emitted for:
                         │
 ┌───────────────────────▼─────────────────────────────┐
 │              ITransferAdapter                       │
-│   B2Adapter  ·  S3Adapter  ·  R2Adapter            │
+│   B2Adapter · S3Adapter · R2Adapter · HttpAdapter  │
 │   (your adapter here)                              │
 └─────────────────────────────────────────────────────┘
 ```
@@ -609,7 +611,7 @@ npx jest --testPathPattern="engine" --runInBand
 | `chunk.test.ts`        | 8     | ChunkMeta invariants                                                               |
 | `session.test.ts`      | 37    | State machine, transitions                                                         |
 | `chunker.test.ts`      | 14    | File splitting edge cases                                                          |
-| `scheduler.test.ts`    | 11    | Concurrency, pause/resume, drain                                                   |
+| `scheduler.test.ts`    | 19    | Concurrency, pause/resume, drain, adaptive scale-up/down, cooldown                 |
 | `retry.test.ts`        | 11    | Backoff, non-retryable fast-fail                                                   |
 | `progress.test.ts`     | 13    | EMA speed, ETA, interval emission                                                  |
 | `store.memory.test.ts` | 14    | CRUD, deep-clone isolation                                                         |
@@ -619,9 +621,10 @@ npx jest --testPathPattern="engine" --runInBand
 | `resume.test.ts`       | 21    | Resume, cancel, reconcile, file-change detection                                   |
 | `B2Adapter.test.ts`    | 18    | Mock-fetch B2 lifecycle, auth retry, HTTP timeout                                  |
 | `S3Adapter.test.ts`    | 30    | S3/R2 lifecycle, resume, error mapping, HTTP timeout                               |
+| `HttpAdapter.test.ts`  | 14    | init/upload/complete/abort/getRemoteState, factory, no-op abort, error propagation |
 | `downloader.test.ts`   | 29    | RangePlanner, FileWriter, RetryEngine, ProgressEngine, ChunkScheduler, integration |
 
-**Total: 244 tests**
+**Total: 266 tests**
 
 ---
 
@@ -635,7 +638,7 @@ packages/
   adapters/
     b2/          – @transferx/adapter-b2
     s3/          – @transferx/adapter-s3  (S3 + R2)
-    http/        – @transferx/adapter-http  (planned)
+    http/        – @transferx/adapter-http  (generic HTTP callback adapter)
 examples/
   node-b2/       – Production-ready CLI upload example
 docs/

@@ -469,7 +469,7 @@ export class UploadEngine {
     }
 
     const reader = this._readerFactory(session.file);
-    const scheduler = new Scheduler(this._config.concurrency.initial);
+    const scheduler = new Scheduler(this._config.concurrency);
 
     this._activeUploads.set(session.id, { scheduler, session });
     let fatalCount = 0;
@@ -541,6 +541,7 @@ export class UploadEngine {
         const error = err instanceof Error ? err : networkError(String(err));
         this._bus.emit({ type: "chunk:fatal", session, chunk, error });
         await this._store.save(session);
+        scheduler.recordFailure();
         return;
       }
 
@@ -553,6 +554,7 @@ export class UploadEngine {
       progress.confirmBytes(chunk.size);
       this._bus.emit({ type: "chunk:done", session, chunk });
       await this._store.save(session);
+      scheduler.recordSuccess();
     };
 
     for (const chunk of chunks) {

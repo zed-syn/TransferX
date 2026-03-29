@@ -1,6 +1,6 @@
 {
   "name": "@transferx/adapter-s3",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "description": "TransferX adapters for AWS S3 and Cloudflare R2 multipart uploads",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,6 +13,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.0.0",
-    "@transferx/core": "0.1.3"
+    "@transferx/core": "1.0.0"
   }
 }

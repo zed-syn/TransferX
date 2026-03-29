@@ -45,32 +45,27 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
 export interface ConcurrencyPolicy {
   /**
    * Initial number of parallel chunk uploads.
+   * When `adaptive` is false this is the fixed concurrency for the entire upload.
    * Default: 4
    */
   initial: number;
   /**
-   * Minimum concurrency the adaptive engine will shrink to.
+   * Minimum concurrency the adaptive engine will shrink to under high error rates.
    * Default: 1
-   *
-   * @remarks **NOT YET IMPLEMENTED** — this field is stored but has no effect
-   * in the current release. Adaptive concurrency is planned for v1.1.
    */
   min: number;
   /**
-   * Maximum concurrency the adaptive engine will grow to.
+   * Maximum concurrency the adaptive engine will grow to when the error rate is low.
    * Default: 16
-   *
-   * @remarks **NOT YET IMPLEMENTED** — this field is stored but has no effect
-   * in the current release. Adaptive concurrency is planned for v1.1.
    */
   max: number;
   /**
    * Whether to enable adaptive concurrency adjustment.
+   * When true, the Scheduler maintains a sliding window of the last 20 chunk
+   * outcomes and automatically scales concurrency between `min` and `max`:
+   *   - errorRate > 30% → scale down (floor: min)
+   *   - errorRate < 5% for 10+ consecutive successes → scale up (ceiling: max)
    * Default: true
-   *
-   * @remarks **NOT YET IMPLEMENTED** — setting this to `true` or `false` has
-   * no effect in the current release. The engine always uses `initial` as a
-   * fixed concurrency value. Adaptive concurrency is planned for v1.1.
    */
   adaptive: boolean;
 }

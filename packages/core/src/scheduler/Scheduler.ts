@@ -11,18 +11,27 @@
  *   5. Allow dynamic concurrency adjustment (adaptive engine hooks in here).
  *   6. Provide pause/resume at the scheduler level.
  *
- * Design decisions:
- *   - Tasks are plain async functions (() => Promise<void>).
- *     The scheduler does not know about chunks or sessions — decoupled.
- *   - Concurrency = the hard cap on simultaneously active tasks.
- *   - The internal queue is a simple array; head = next to run.
- *     This is fine for the queue depths we expect (hundreds of chunks, not millions).
- *   - On error the scheduler itself does NOT retry — the retry engine
- *     wraps the task and handles that. The scheduler only cares about
- *     "how many are running right now".
+ * Adaptive concurrency:
+ *   When constructed with a ConcurrencyPolicy (adaptive: true), the scheduler
+ *   maintains a sliding window of the last WINDOW_SIZE task outcomes and adjusts
+ *   the concurrency ceiling automatically:
+ *     - errorRate > HIGH_ERROR_RATE  → scale down (floor: policy.min)
+ *     - errorRate < LOW_ERROR_RATE   → scale up after SCALE_UP_COUNT stable
+ *                                       successes (ceiling: policy.max)
+ *   Call recordSuccess() / recordFailure() after each task completes to feed
+ *   the adaptive algorithm.
  */
 
+import type { ConcurrencyPolicy } from "../types/config.js";
+
 export type Task = () => Promise<void>;
+
+// ── Adaptive constants ────────────────────────────────────────────────────────
+const WINDOW_SIZE = 20;
+const HIGH_ERROR_RATE = 0.3;
+const LOW_ERROR_RATE = 0.05;
+const SCALE_UP_COUNT = 10;
+const COOLDOWN_MS = 3_000;
 
 export interface SchedulerStats {
   active: number;
@@ -35,10 +44,16 @@ export interface SchedulerStats {
 
 export class Scheduler {
   private _concurrency: number;
+  private readonly _policy: ConcurrencyPolicy | null;
   private _active = 0;
   private _paused = false;
   private _totalExecuted = 0;
   private _totalErrored = 0;
+
+  // Adaptive sliding window
+  private readonly _window: boolean[] = [];
+  private _lastAdjustedAt = 0;
+  private _stableSuccessStreak = 0;
 
   /** Internal FIFO queue. Index 0 = next task to run. */
   private readonly _queue: Task[] = [];
@@ -47,8 +62,20 @@ export class Scheduler {
   /** Callbacks waiting for the scheduler to become idle (see drain()). */
   private readonly _drainCallbacks: Array<() => void> = [];
 
-  constructor(concurrency: number) {
-    this._concurrency = this._validateConcurrency(concurrency);
+  /**
+   * @param concurrencyOrPolicy — either a plain number (fixed concurrency) or
+   *   a ConcurrencyPolicy object (enables adaptive control when adaptive: true).
+   */
+  constructor(concurrencyOrPolicy: number | ConcurrencyPolicy) {
+    if (typeof concurrencyOrPolicy === "number") {
+      this._concurrency = this._validateConcurrency(concurrencyOrPolicy);
+      this._policy = null;
+    } else {
+      this._policy = concurrencyOrPolicy;
+      this._concurrency = this._validateConcurrency(
+        concurrencyOrPolicy.initial,
+      );
+    }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -71,6 +98,28 @@ export class Scheduler {
     this._assertNotDestroyed();
     this._queue.unshift(task);
     this._drain();
+  }
+
+  /**
+   * Record a successful task outcome for the adaptive concurrency controller.
+   * No-op when the scheduler was constructed with a plain number.
+   */
+  recordSuccess(): void {
+    this._window.push(true);
+    if (this._window.length > WINDOW_SIZE) this._window.shift();
+    this._stableSuccessStreak++;
+    this._adaptConcurrency();
+  }
+
+  /**
+   * Record a failed task outcome (exhausted retry budget) for the adaptive
+   * concurrency controller. No-op when constructed with a plain number.
+   */
+  recordFailure(): void {
+    this._window.push(false);
+    if (this._window.length > WINDOW_SIZE) this._window.shift();
+    this._stableSuccessStreak = 0;
+    this._adaptConcurrency();
   }
 
   /** Pause execution — currently running tasks finish, no new ones start. */
@@ -220,5 +269,37 @@ export class Scheduler {
       throw new RangeError(`concurrency must be a positive integer, got ${n}`);
     }
     return n;
+  }
+
+  /**
+   * Adaptive concurrency controller — called after every recorded outcome.
+   * Uses a sliding window of the last WINDOW_SIZE results to compute the
+   * error rate and adjusts the concurrency ceiling accordingly.
+   */
+  private _adaptConcurrency(): void {
+    const policy = this._policy;
+    if (!policy || !policy.adaptive) return;
+    if (this._window.length < WINDOW_SIZE) return;
+
+    const now = Date.now();
+    if (now - this._lastAdjustedAt < COOLDOWN_MS) return;
+
+    const errors = this._window.filter((v) => !v).length;
+    const errorRate = errors / this._window.length;
+
+    if (errorRate > HIGH_ERROR_RATE && this._concurrency > policy.min) {
+      this._concurrency = Math.max(policy.min, this._concurrency - 1);
+      this._lastAdjustedAt = now;
+      this._stableSuccessStreak = 0;
+      // No need to drain — reducing limit takes effect as slots free up
+    } else if (
+      errorRate < LOW_ERROR_RATE &&
+      this._stableSuccessStreak >= SCALE_UP_COUNT &&
+      this._concurrency < policy.max
+    ) {
+      this._concurrency = Math.min(policy.max, this._concurrency + 1);
+      this._lastAdjustedAt = now;
+      this._drain(); // Fill the newly opened slot immediately
+    }
   }
 }
