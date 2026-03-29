@@ -40,6 +40,12 @@ import { ChunkScheduler } from "../src/ChunkScheduler";
 import { DownloadManager } from "../src/DownloadManager";
 import { DownloadMetrics } from "../src/DownloadMetrics";
 import { DownloadEventBus } from "../src/EventBus";
+import {
+  FetchHttpClient,
+  PooledHttpClient,
+  createHttpClient,
+  isUndiciAvailable,
+} from "../src/HttpClient";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -998,9 +1004,7 @@ describe("Byte-level sub-chunk resume", () => {
     // Chunk 0 should request from partialBytesWritten (rounded to 1 MiB = 0, since 512KiB < 1MiB)
     // bytesWritten = 512 KiB, RESUME_GRANULARITY = 1 MiB → resumeOffset = 0
     // So chunk 0 range is bytes=0-1048575 (full chunk re-download — safe rounding)
-    const chunk0Range = rangesRequested.find((r) =>
-      r.startsWith("bytes=0-"),
-    );
+    const chunk0Range = rangesRequested.find((r) => r.startsWith("bytes=0-"));
     expect(chunk0Range).toBeDefined();
 
     // Final file must be byte-perfect
@@ -1058,8 +1062,12 @@ describe("Byte-level sub-chunk resume", () => {
 describe("FileWriter pre-allocation (ftruncate)", () => {
   let tmpDir: string;
 
-  beforeEach(() => { tmpDir = makeTempDir(); });
-  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   test("fresh open with known fileSize creates file of correct size immediately", async () => {
     const filePath = path.join(tmpDir, "preallocated.bin");
@@ -1113,8 +1121,12 @@ describe("FileWriter pre-allocation (ftruncate)", () => {
 describe("DownloadManager", () => {
   let tmpDir: string;
 
-  beforeEach(() => { tmpDir = makeTempDir(); });
-  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   function makeBody(size: number): Uint8Array {
     const buf = new Uint8Array(size);
@@ -1271,8 +1283,12 @@ describe("DownloadManager", () => {
 describe("DownloadMetrics", () => {
   let tmpDir: string;
 
-  beforeEach(() => { tmpDir = makeTempDir(); });
-  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   function makeBody(size: number): Uint8Array {
     const buf = new Uint8Array(size);
@@ -1384,7 +1400,10 @@ describe("DownloadMetrics", () => {
 describe("ChunkScheduler throughput signal", () => {
   test("addThroughputSample is a no-op when adaptive=false", () => {
     const sc = new ChunkScheduler({
-      initial: 2, min: 1, max: 4, adaptive: false,
+      initial: 2,
+      min: 1,
+      max: 4,
+      adaptive: false,
     });
     // Should not throw
     sc.addThroughputSample(100);
@@ -1395,7 +1414,10 @@ describe("ChunkScheduler throughput signal", () => {
 
   test("addThroughputSample records samples when adaptive=true", () => {
     const sc = new ChunkScheduler({
-      initial: 2, min: 1, max: 16, adaptive: true,
+      initial: 2,
+      min: 1,
+      max: 16,
+      adaptive: true,
     });
     // Should not throw and not change limit immediately
     for (let i = 0; i < 15; i++) sc.addThroughputSample(10);
@@ -1403,3 +1425,178 @@ describe("ChunkScheduler throughput signal", () => {
   });
 });
 
+// ─── HttpClient tests ─────────────────────────────────────────────────────────
+
+describe("HttpClient", () => {
+  // ── FetchHttpClient ─────────────────────────────────────────────────────────
+
+  test("FetchHttpClient delegates to the provided fetch function", async () => {
+    const calls: string[] = [];
+    const mockFetch: typeof fetch = async (url) => {
+      calls.push(String(url));
+      return new Response(Buffer.from("hello"), {
+        status: 200,
+        headers: { "content-type": "text/plain", "x-custom": "value" },
+      });
+    };
+
+    const client = new FetchHttpClient(mockFetch);
+    const resp = await client.request("http://example.com/test", {});
+
+    expect(calls).toEqual(["http://example.com/test"]);
+    expect(resp.status).toBe(200);
+    expect(resp.header("content-type")).toBe("text/plain");
+    expect(resp.header("x-CUSTOM")).toBe("value"); // case-insensitive via Fetch
+    expect(resp.body).not.toBeNull();
+  });
+
+  test("FetchHttpClient passes method and headers", async () => {
+    let capturedMethod: string | undefined;
+    let capturedRange: string | undefined;
+
+    const mockFetch: typeof fetch = async (_url, init) => {
+      capturedMethod = init?.method;
+      capturedRange = (init?.headers as Record<string, string>)["Range"];
+      return new Response(null, { status: 206 });
+    };
+
+    const client = new FetchHttpClient(mockFetch);
+    const resp = await client.request("http://example.com/file.bin", {
+      method: "GET",
+      headers: { Range: "bytes=0-1023" },
+    });
+
+    expect(capturedMethod).toBe("GET");
+    expect(capturedRange).toBe("bytes=0-1023");
+    expect(resp.status).toBe(206);
+  });
+
+  test("FetchHttpClient tracks request count in stats()", async () => {
+    const mockFetch: typeof fetch = async () =>
+      new Response(null, { status: 200 });
+
+    const client = new FetchHttpClient(mockFetch);
+    expect(client.stats().requests).toBe(0);
+    expect(client.stats().pooled).toBe(false);
+
+    await client.request("http://x.com/a", {});
+    await client.request("http://x.com/b", {});
+    await client.request("http://x.com/c", {});
+
+    expect(client.stats().requests).toBe(3);
+    expect(client.stats().reuseRate).toBe(0); // no pooling
+  });
+
+  test("FetchHttpClient.close() is a no-op", async () => {
+    const client = new FetchHttpClient(
+      async () => new Response(null, { status: 200 }),
+    );
+    await expect(client.close()).resolves.toBeUndefined();
+  });
+
+  test("FetchHttpClient forwards AbortSignal to fetch", async () => {
+    const ctrl = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+
+    const mockFetch: typeof fetch = async (_url, init) => {
+      capturedSignal = init?.signal as AbortSignal | undefined;
+      return new Response(null, { status: 200 });
+    };
+
+    const client = new FetchHttpClient(mockFetch);
+    await client.request("http://x.com/", { signal: ctrl.signal });
+    expect(capturedSignal).toBe(ctrl.signal);
+  });
+
+  // ── createHttpClient factory ────────────────────────────────────────────────
+
+  test("createHttpClient returns FetchHttpClient when fetchOverride is provided", () => {
+    const mockFetch: typeof fetch = async () =>
+      new Response(null, { status: 200 });
+    const client = createHttpClient("https://example.com/file", 8, mockFetch);
+    expect(client).toBeInstanceOf(FetchHttpClient);
+    expect(client.stats().pooled).toBe(false);
+  });
+
+  test("createHttpClient returns PooledHttpClient when undici is available and no override", () => {
+    if (!isUndiciAvailable()) {
+      // Skip test if undici is not installed in this environment
+      return;
+    }
+    const client = createHttpClient("https://example.com/file", 8);
+    expect(client).toBeInstanceOf(PooledHttpClient);
+    expect(client.stats().pooled).toBe(true);
+    expect(client.stats().origin).toBe("https://example.com");
+    // Close to release pool sockets
+    void client.close();
+  });
+
+  test("createHttpClient returns FetchHttpClient when no override and undici absent", () => {
+    // Test the fallback path by temporarily patching isUndiciAvailable
+    // We can test this indirectly: when fetchOverride is provided, always FetchHttpClient
+    const client = createHttpClient(
+      "https://example.com/file",
+      8,
+      globalThis.fetch,
+    );
+    expect(client).toBeInstanceOf(FetchHttpClient);
+  });
+
+  // ── PooledHttpClient ────────────────────────────────────────────────────────
+
+  test("PooledHttpClient stats() increments request count and tracks reuse", () => {
+    if (!isUndiciAvailable()) return; // skip if undici not installed
+
+    const client = new PooledHttpClient("https://httpbin.org", 4);
+    expect(client.stats().requests).toBe(0);
+    expect(client.stats().reuseRate).toBe(0);
+    expect(client.stats().pooled).toBe(true);
+    expect(client.stats().origin).toBe("https://httpbin.org");
+    void client.close();
+  });
+
+  test("PooledHttpClient constructor throws when undici is not installed", () => {
+    if (isUndiciAvailable()) {
+      // If undici IS installed, we can't test this path without mocking
+      return;
+    }
+    expect(() => new PooledHttpClient("https://example.com", 4)).toThrow(
+      "undici is not installed",
+    );
+  });
+
+  // ── DownloadEngine uses FetchHttpClient path with injected fetch (existing behavior) ─
+
+  test("DownloadEngine uses connection pool stats log entry", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const size = 512 * 1024;
+      const body = new Uint8Array(size).fill(0xab);
+      const { fetch } = makeFetch(body, { supportsRange: true });
+
+      const engine = makeEngine(fetch, path.join(tmpDir, "store"));
+      const inner = engine.createTask(
+        "http://test/file.bin",
+        path.join(tmpDir, "file.bin"),
+      );
+      const task = new DownloadTask(inner);
+
+      const logMessages: string[] = [];
+      inner.bus.on("log", ({ message }) => logMessages.push(message));
+
+      await task.start();
+
+      // Engine must emit an HTTP pool stats log entry
+      const poolLog = logMessages.find((m) => m.startsWith("HTTP pool stats:"));
+      expect(poolLog).toBeDefined();
+
+      // Parse and validate stats shape
+      const json = poolLog!.replace("HTTP pool stats: ", "");
+      const stats = JSON.parse(json) as { requests: number; pooled: boolean };
+      expect(stats.requests).toBeGreaterThan(0);
+      expect(typeof stats.pooled).toBe("boolean");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

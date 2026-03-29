@@ -72,6 +72,11 @@ import { withRetry } from "./RetryEngine.js";
 import { ProgressEngine } from "./ProgressEngine.js";
 import { ChunkScheduler } from "./ChunkScheduler.js";
 import { BufferPool } from "./BufferPool.js";
+import {
+  createHttpClient,
+  IHttpClient,
+  type IHttpResponse,
+} from "./HttpClient.js";
 
 // Conservative resume granularity: round bytesWritten down to 1 MiB
 // boundaries before requesting partial chunks. This bounds potential discrepancy
@@ -325,6 +330,16 @@ class InternalTask implements DownloadEngineTask {
       Math.max(4, this._config.concurrency.max * 2),
     );
 
+    // HTTP connection pool: shared across all chunk fetches for this task.
+    // Eliminates per-chunk TCP + TLS handshake overhead by reusing keep-alive
+    // sockets. Falls back to FetchHttpClient when config.fetch is injected
+    // (test path) or undici is not installed.
+    const httpClient = createHttpClient(
+      this.url,
+      this._config.concurrency.max,
+      this._config.fetch,
+    );
+
     let fatalError: DownloadError | null = null;
     let completedSinceSync = 0;
     const fsyncInterval = this._config.fsyncIntervalChunks;
@@ -345,7 +360,15 @@ class InternalTask implements DownloadEngineTask {
         const t0 = Date.now();
         try {
           const bytesDownloaded = await withRetry(
-            () => this._downloadChunk(chunk, writer, progress, signal, pool),
+            () =>
+              this._downloadChunk(
+                chunk,
+                writer,
+                progress,
+                signal,
+                pool,
+                httpClient,
+              ),
             this._config.retry,
             (err, attempt) => {
               scheduler.recordFailure();
@@ -422,6 +445,13 @@ class InternalTask implements DownloadEngineTask {
       await writer.flush();
     } finally {
       await writer.close();
+      // Log pool stats then release keep-alive sockets.
+      this.bus.emit("log", {
+        taskId: this.id,
+        level: "info",
+        message: `HTTP pool stats: ${JSON.stringify(httpClient.stats())}`,
+      });
+      await httpClient.close();
     }
 
     if (fatalError) {
@@ -482,8 +512,8 @@ class InternalTask implements DownloadEngineTask {
     progress: ProgressEngine,
     signal: AbortSignal,
     pool: BufferPool,
+    httpClient: IHttpClient,
   ): Promise<number> {
-    const fetchFn = this._config.fetch ?? globalThis.fetch;
     const isStreaming = RangePlanner.isStreamingChunk(chunk);
 
     // Byte-level sub-chunk resume.
@@ -512,9 +542,12 @@ class InternalTask implements DownloadEngineTask {
     const timeoutSignal = AbortSignal.timeout(this._config.timeoutMs);
     const combinedSignal = anyAborted([signal, timeoutSignal]);
 
-    let response: Response;
+    let response: IHttpResponse;
     try {
-      response = await fetchFn(this.url, { headers, signal: combinedSignal });
+      response = await httpClient.request(this.url, {
+        headers,
+        signal: combinedSignal,
+      });
     } catch (err: unknown) {
       const e = err as Error | undefined;
       if (e?.name === "AbortError" || e?.name === "TimeoutError") {

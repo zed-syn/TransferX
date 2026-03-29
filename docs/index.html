@@ -347,6 +347,10 @@
         color: #61afef;
         font-weight: 600;
       } /* arch names — blue */
+      .arch .muted {
+        color: var(--muted-2);
+        font-style: italic;
+      } /* arch label — dim italic */
 
       /* ─── Tables ──────────────────────────────────────────── */
       table {
@@ -2091,30 +2095,30 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
       <!-- ── Downloads – Quick Start ── -->
       <section class="section" id="download-quickstart">
         <h2>Downloads — Quick Start</h2>
-        <pre><code>import { createDownloader } from "@transferx/sdk";
+        <pre><code><span class="kw">import</span> <span class="pn">{</span> <span class="fn">createDownloader</span> <span class="pn">}</span> <span class="kw">from</span> <span class="str">"@transferx/sdk"</span><span class="pn">;</span>
 
-const task = createDownloader({
-  url: "https://example.com/large-file.zip",
-  outputPath: "/tmp/large-file.zip",
-});
+<span class="kw">const</span> <span class="id">task</span> <span class="op">=</span> <span class="fn">createDownloader</span><span class="pn">({</span>
+  <span class="pr">url</span><span class="op">:</span> <span class="str">"https://example.com/large-file.zip"</span><span class="pn">,</span>
+  <span class="pr">outputPath</span><span class="op">:</span> <span class="str">"/tmp/large-file.zip"</span><span class="pn">,</span>
+<span class="pn">});</span>
 
-task.on("progress", (p) => {
-  const pct  = p.percent?.toFixed(1) ?? "?";
-  const mbps = (p.speedBytesPerSec / 1024 / 1024).toFixed(1);
-  console.log(`${pct}%  ${mbps} MB/s`);
-});
+<span class="id">task</span><span class="pn">.</span><span class="fn">on</span><span class="pn">(</span><span class="str">"progress"</span><span class="pn">,</span> <span class="pn">(</span><span class="id">p</span><span class="pn">)</span> <span class="op">=&gt;</span> <span class="pn">{</span>
+  <span class="kw">const</span> <span class="id">pct</span>  <span class="op">=</span> <span class="id">p</span><span class="pn">.</span><span class="pr">percent</span><span class="op">?.</span><span class="fn">toFixed</span><span class="pn">(</span><span class="num">1</span><span class="pn">)</span> <span class="op">??</span> <span class="str">"?"</span><span class="pn">;</span>
+  <span class="kw">const</span> <span class="id">mbps</span> <span class="op">=</span> <span class="pn">(</span><span class="id">p</span><span class="pn">.</span><span class="pr">speedBytesPerSec</span> <span class="op">/</span> <span class="num">1024</span> <span class="op">/</span> <span class="num">1024</span><span class="pn">).</span><span class="fn">toFixed</span><span class="pn">(</span><span class="num">1</span><span class="pn">);</span>
+  <span class="id">console</span><span class="pn">.</span><span class="fn">log</span><span class="pn">(</span><span class="str">`<span class="pn">${</span><span class="id">pct</span><span class="pn">}</span>%  <span class="pn">${</span><span class="id">mbps</span><span class="pn">}</span> MB/s`</span><span class="pn">);</span>
+<span class="pn">});</span>
 
-await task.start();
-console.log("Done!");</code></pre>
+<span class="kw">await</span> <span class="id">task</span><span class="pn">.</span><span class="fn">start</span><span class="pn">();</span>
+<span class="id">console</span><span class="pn">.</span><span class="fn">log</span><span class="pn">(</span><span class="str">"Done!"</span><span class="pn">);</span></code></pre>
 
         <h3>Pause · Resume · Cancel</h3>
-        <pre><code>const task = createDownloader({ url, outputPath });
-const done  = task.start();  // returns Promise&lt;DownloadSession&gt;
+        <pre><code><span class="kw">const</span> <span class="id">task</span> <span class="op">=</span> <span class="fn">createDownloader</span><span class="pn">({</span> <span class="id">url</span><span class="pn">,</span> <span class="id">outputPath</span> <span class="pn">});</span>
+<span class="kw">const</span> <span class="id">done</span>  <span class="op">=</span> <span class="id">task</span><span class="pn">.</span><span class="fn">start</span><span class="pn">();</span>  <span class="cm">// returns Promise&lt;DownloadSession&gt;</span>
 
-task.pause();   // queues drain — in-flight chunks finish naturally
-task.resume();  // re-activates scheduling
+<span class="id">task</span><span class="pn">.</span><span class="fn">pause</span><span class="pn">();</span>   <span class="cm">// queues drain — in-flight chunks finish naturally</span>
+<span class="id">task</span><span class="pn">.</span><span class="fn">resume</span><span class="pn">();</span>  <span class="cm">// re-activates scheduling</span>
 
-await task.cancel(); // persists "cancelled" session; resumable later</code></pre>
+<span class="kw">await</span> <span class="id">task</span><span class="pn">.</span><span class="fn">cancel</span><span class="pn">();</span> <span class="cm">// persists "cancelled" session; resumable later</span></code></pre>
       </section>
 
       <!-- ── Downloads – Crash Resume ── -->
@@ -2405,49 +2409,28 @@ await task.cancel(); // persists "cancelled" session; resumable later</code></pr
       <!-- ── Architecture ── -->
       <section class="section" id="architecture">
         <h2>Architecture</h2>
-        <div class="arch">
-          <span class="hl"
-            >┌─────────────────────────────────────────────────────────┐</span
-          >
-          <span class="hl">│ @transferx/sdk │</span>
-          │ <span class="ac">createB2Engine()</span> ·
-          <span class="ac">makeUploadSession()</span> ·
-          <span class="ac">createDownloader()</span> │
-          <span class="hl"
-            >└───────────────────────┬─────────────────────────────────┘</span
-          >
-          │
-          <span class="hl"
-            >┌───────────────────────▼─────────────────────────────────┐</span
-          >
-          <span class="hl">│ UploadEngine │</span>
-          │ │ │ ┌─────────────┐ ┌──────────────┐ ┌───────────────┐ │ │ │
-          <span class="ac">Scheduler</span> │ │
-          <span class="ac">RetryEngine</span> │ │<span class="ac"
-            >ProgressEngine</span
-          >│ │ │ │ (concurr.) │ │ (backoff, │ │ (EMA speed, │ │ │ │ │ │
-          rate-limit) │ │ ETA, %) │ │ │ └─────────────┘ └──────────────┘
-          └───────────────┘ │ │ │ │ ┌─────────────┐ ┌──────────────┐
-          ┌───────────────┐ │ │ │ <span class="ac">Chunker</span> │ │
-          <span class="ac">EventBus</span> │ │
-          <span class="ac">ISessionStore</span>│ │ │ │ (split file │ │ (typed, │
-          │ (Memory / │ │ │ │ into parts)│ │ sync) │ │ File) │ │ │
-          └─────────────┘ └──────────────┘ └───────────────┘ │
-          <span class="hl"
-            >└───────────────────────┬─────────────────────────────────┘</span
-          >
-          │ ITransferAdapter
-          <span class="hl"
-            >┌───────────────────────▼─────────────────────────────────┐</span
-          >
-          │ Storage Provider Adapters │ │ <span class="ac">B2Adapter</span>
-          <span class="ac">S3Adapter</span> &nbsp;
-          <span class="ac">R2Adapter</span> │ │ (native B2 API) (aws-sdk v3)
-          &nbsp;(Cloudflare R2) │
-          <span class="hl"
-            >└─────────────────────────────────────────────────────────┘</span
-          >
-        </div>
+        <div class="arch"><span class="hl">┌─────────────────────────────────────────────────────┐</span>
+<span class="hl">│</span>                   <span class="ac">@transferx/sdk</span>                    <span class="hl">│</span>
+<span class="hl">│</span>  <span class="fn">createB2Engine()</span>  ·  <span class="fn">makeUploadSession()</span>           <span class="hl">│</span>
+<span class="hl">│</span>  <span class="fn">createDownloader()</span>                                 <span class="hl">│</span>
+<span class="hl">└───────────────────────┬─────────────────────────────┘</span>
+                        │
+<span class="hl">┌───────────────────────▼─────────────────────────────┐</span>
+<span class="hl">│</span>                  <span class="ac">UploadEngine</span>                       <span class="hl">│</span>
+<span class="hl">│</span>  ┌───────────┐  ┌──────────┐  ┌──────────────────┐  <span class="hl">│</span>
+<span class="hl">│</span>  │ <span class="ac">Scheduler</span> │  │ <span class="ac">Retry</span>    │  │ <span class="ac">ProgressEngine</span>   │  <span class="hl">│</span>
+<span class="hl">│</span>  │ (concurr.)│  │ <span class="ac">Engine</span>   │  │ (EMA speed/ETA)  │  <span class="hl">│</span>
+<span class="hl">│</span>  └───────────┘  └──────────┘  └──────────────────┘  <span class="hl">│</span>
+<span class="hl">│</span>  ┌───────────┐  ┌──────────┐  ┌──────────────────┐  <span class="hl">│</span>
+<span class="hl">│</span>  │ <span class="ac">Chunker</span>   │  │ <span class="ac">EventBus</span> │  │ <span class="ac">ISessionStore</span>    │  <span class="hl">│</span>
+<span class="hl">│</span>  └───────────┘  └──────────┘  └──────────────────┘  <span class="hl">│</span>
+<span class="hl">└───────────────────────┬─────────────────────────────┘</span>
+                        │  <span class="muted">ITransferAdapter</span>
+<span class="hl">┌───────────────────────▼─────────────────────────────┐</span>
+<span class="hl">│</span>            Storage Provider Adapters                <span class="hl">│</span>
+<span class="hl">│</span>  <span class="ac">B2Adapter</span>   <span class="ac">S3Adapter</span>   <span class="ac">R2Adapter</span>                  <span class="hl">│</span>
+<span class="hl">│</span>  (native B2 API)  (aws-sdk v3)  (Cloudflare R2)     <span class="hl">│</span>
+<span class="hl">└─────────────────────────────────────────────────────┘</span></div>
 
         <h3>Data flow for a single chunk</h3>
         <pre><code>UploadEngine.upload()
@@ -2472,7 +2455,7 @@ await task.cancel(); // persists "cancelled" session; resumable later</code></pr
           border-top: 1px solid var(--border);
         "
       >
-        TransferX · MIT License · 244 tests passing
+        TransferX · MIT License · 313 tests passing
       </p>
     </main>
 

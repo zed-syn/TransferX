@@ -91,3 +91,17 @@ export type {
 // ── Observability (Phase 4) ───────────────────────────────────────────────
 export { DownloadMetrics } from "./DownloadMetrics.js";
 export type { DownloadMetricsSnapshot } from "./DownloadMetrics.js";
+
+// ── HTTP transport abstraction (Phase 5) ─────────────────────────────────────
+export {
+  FetchHttpClient,
+  PooledHttpClient,
+  createHttpClient,
+  isUndiciAvailable,
+} from "./HttpClient.js";
+export type {
+  IHttpClient,
+  IHttpResponse,
+  IHttpRequestOptions,
+  ConnectionStats,
+} from "./HttpClient.js";

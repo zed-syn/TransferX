@@ -96,6 +96,10 @@ export {
   createDownloadTask,
   DownloadManager,
   DownloadMetrics,
+  FetchHttpClient,
+  PooledHttpClient,
+  createHttpClient,
+  isUndiciAvailable,
 } from "@transferx/downloader";
 export type {
   DownloadConfig,
@@ -114,6 +118,10 @@ export type {
   DownloadManagerStatus,
   ManagedDownload,
   DownloadMetricsSnapshot,
+  IHttpClient,
+  IHttpResponse,
+  IHttpRequestOptions,
+  ConnectionStats,
 } from "@transferx/downloader";
 
 // ── Shared imports ────────────────────────────────────────────────────────────

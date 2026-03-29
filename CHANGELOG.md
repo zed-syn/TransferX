@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.0] — 2026-04-01
+
+### Added — `@transferx/downloader`
+- **Connection pooling via undici** (`HttpClient.ts`): new `IHttpClient` abstraction
+  with `FetchHttpClient` (test/fallback path) and `PooledHttpClient` (production, uses
+  `undici.Pool`). A single pool is created per download task and shared across all
+  parallel chunk requests, eliminating per-chunk TCP/TLS handshake overhead.
+- **`PooledHttpClient`** keeps sockets alive between chunks with `pipelining: 1` and
+  `keepAliveTimeout: 4 000 ms`, matching IDM-class behavior on HTTP/1.1 servers.
+- **`createHttpClient()` factory**: auto-selects `PooledHttpClient` when undici is
+  installed; gracefully falls back to `FetchHttpClient(globalThis.fetch)` when it is
+  not — no breaking change to existing code paths.
+- **HTTP pool stats log event**: `DownloadEngine` emits `"HTTP pool stats: {…}"` on
+  the `log` bus channel after each task completes, reporting `requests`, `reuseRate`,
+  `pooled`, and pool `origin`.
+- **New exports** (`IHttpClient`, `IHttpResponse`, `IHttpRequestOptions`,
+  `ConnectionStats`, `FetchHttpClient`, `PooledHttpClient`, `createHttpClient`,
+  `isUndiciAvailable`) added to both `@transferx/downloader` and `@transferx/sdk`.
+- **`undici ^6.21.0`** added as a peer/optional dependency of `@transferx/downloader`.
+
+### Changed — `@transferx/downloader`
+- `DownloadEngine._downloadChunk` now accepts an `IHttpClient` parameter instead of a
+  raw `fetchFn`. All callers are internal; no public API change.
+
+---
+
 ## [1.2.0] — 2026-03-30
 
 ### Added — `@transferx/downloader`
