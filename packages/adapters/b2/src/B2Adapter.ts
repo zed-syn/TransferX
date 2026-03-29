@@ -44,6 +44,7 @@ import type {
   ITransferAdapter,
   ChunkUploadResult,
   RemoteUploadState,
+  LogLevel,
 } from "@transferx/core";
 import type { TransferSession } from "@transferx/core";
 import type { ChunkMeta } from "@transferx/core";
@@ -93,6 +94,25 @@ export interface B2AdapterOptions {
    * Inject a mock in tests to avoid network calls.
    */
   fetch?: typeof fetch;
+  /**
+   * HTTP request timeout in milliseconds applied to every outbound request.
+   * A stalled connection that exceeds this threshold will be aborted and the
+   * operation will throw a retryable `network` error.
+   * Default: 120_000 (2 minutes)
+   */
+  timeoutMs?: number;
+  /**
+   * Optional structured-log callback. Wire this to your engine event bus for
+   * end-to-end observability. The `createB2Engine()` helper does this automatically.
+   *
+   * @example
+   * const adapter = new B2Adapter({ ..., onLog: (level, msg, ctx) => bus.emit({ type: 'log', level, message: msg, context: ctx }) });
+   */
+  onLog?: (
+    level: LogLevel,
+    message: string,
+    context?: Record<string, unknown>,
+  ) => void;
 }
 
 export class B2Adapter implements ITransferAdapter {
@@ -128,7 +148,6 @@ export class B2Adapter implements ITransferAdapter {
     data: Uint8Array,
     _sha256Hex: string,
   ): Promise<ChunkUploadResult> {
-    const auth = await this._ensureAuth();
     if (!session.providerSessionId) {
       throw new TransferError(
         "providerSessionId is missing — initTransfer must be called first",
@@ -139,25 +158,42 @@ export class B2Adapter implements ITransferAdapter {
     // B2 requires SHA-1 of the part data (their design, not ours)
     const sha1 = createHash("sha1").update(data).digest("hex");
 
-    const partUrl = await this._getUploadPartUrl(
-      auth,
-      session.providerSessionId,
-    );
-
-    const response = await this._fetch(partUrl.uploadUrl, {
-      method: "POST",
-      headers: {
-        Authorization: partUrl.authorizationToken,
-        "Content-Length": String(data.byteLength),
-        "X-Bz-Part-Number": String(chunk.index + 1), // B2 parts are 1-indexed
-        "X-Bz-Content-Sha1": sha1,
-      },
-      body: data,
-    });
-
-    await this._assertResponse(response, chunk.index);
-    const json = (await response.json()) as B2UploadPartResponse;
-    return { providerToken: json.contentSha1 };
+    let auth = await this._ensureAuth();
+    try {
+      return await this._doUploadPart(
+        auth,
+        session.providerSessionId,
+        chunk,
+        data,
+        sha1,
+      );
+    } catch (err) {
+      // If the upload part URL or the actual upload returned 401, the auth
+      // token has expired mid-upload. _assertResponse already cleared
+      // this._auth. Re-authorise once and retry transparently before letting
+      // the error propagate to the retry engine (which would treat "auth" as
+      // non-retryable and permanently fail the chunk).
+      if (err instanceof TransferError && err.category === "auth") {
+        this._opts.onLog?.(
+          "warn",
+          "[B2] Auth token expired during upload — refreshing token and retrying chunk",
+          {
+            sessionId: session.id,
+            chunkIndex: chunk.index,
+          },
+        );
+        auth = await this._authorize();
+        // If this second attempt throws, we let it propagate naturally.
+        return await this._doUploadPart(
+          auth,
+          session.providerSessionId,
+          chunk,
+          data,
+          sha1,
+        );
+      }
+      throw err;
+    }
   }
 
   async completeTransfer(
@@ -241,6 +277,29 @@ export class B2Adapter implements ITransferAdapter {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
+  private async _doUploadPart(
+    auth: B2AuthResponse,
+    fileId: string,
+    chunk: ChunkMeta,
+    data: Uint8Array,
+    sha1: string,
+  ): Promise<ChunkUploadResult> {
+    const partUrl = await this._getUploadPartUrl(auth, fileId);
+    const response = await this._fetchWithTimeout(partUrl.uploadUrl, {
+      method: "POST",
+      headers: {
+        Authorization: partUrl.authorizationToken,
+        "Content-Length": String(data.byteLength),
+        "X-Bz-Part-Number": String(chunk.index + 1), // B2 parts are 1-indexed
+        "X-Bz-Content-Sha1": sha1,
+      },
+      body: data,
+    });
+    await this._assertResponse(response, chunk.index);
+    const json = (await response.json()) as B2UploadPartResponse;
+    return { providerToken: json.contentSha1 };
+  }
+
   private async _ensureAuth(): Promise<B2AuthResponse> {
     if (this._auth) return this._auth;
     return this._authorize();
@@ -251,7 +310,7 @@ export class B2Adapter implements ITransferAdapter {
       `${this._opts.applicationKeyId}:${this._opts.applicationKey}`,
     ).toString("base64");
 
-    const response = await this._fetch(
+    const response = await this._fetchWithTimeout(
       "https://api.backblazeb2.com/b2api/v3/b2_authorize_account",
       {
         headers: { Authorization: `Basic ${credentials}` },
@@ -287,22 +346,40 @@ export class B2Adapter implements ITransferAdapter {
     token: string,
     body: unknown,
   ): Promise<T> {
-    let response: Response;
-    try {
-      response = await this._fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err: unknown) {
-      throw networkError(`B2 request failed: ${String(err)}`, err);
-    }
-
+    const response = await this._fetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        Authorization: token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
     await this._assertResponse(response);
     return response.json() as Promise<T>;
+  }
+
+  /**
+   * Fetch wrapper that enforces a per-request timeout via AbortController.
+   * On timeout, throws a retryable `network` error.
+   * On network failure, normalises the raw error into `networkError`.
+   */
+  private async _fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const timeoutMs = this._opts.timeoutMs ?? 120_000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await this._fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw networkError(`B2 request timed out after ${timeoutMs}ms`, err);
+      }
+      throw networkError(`B2 request failed: ${String(err)}`, err);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async _assertResponse(

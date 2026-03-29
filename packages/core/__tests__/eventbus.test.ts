@@ -219,3 +219,61 @@ describe("EventBus — dispatch safety", () => {
     expect(secondCalled).toBe(true);
   });
 });
+
+// ── Handler error isolation ────────────────────────────────────────────────────
+describe("EventBus — handler error isolation", () => {
+  test("throwing handler does not propagate to the emit() caller", () => {
+    const bus = new EventBus();
+    bus.on("session:done", () => {
+      throw new Error("boom from handler");
+    });
+    expect(() =>
+      bus.emit({ type: "session:done", session: stubSession() }),
+    ).not.toThrow();
+  });
+
+  test("other handlers still run after one throws", () => {
+    const bus = new EventBus();
+    let secondCalled = false;
+    bus.on("session:done", () => {
+      throw new Error("handler 1 throws");
+    });
+    bus.on("session:done", () => {
+      secondCalled = true;
+    });
+    bus.emit({ type: "session:done", session: stubSession() });
+    expect(secondCalled).toBe(true);
+  });
+
+  test("throwing handler causes a log event to be emitted on the same bus", () => {
+    const bus = new EventBus();
+    const logEvents: TransferEvent[] = [];
+
+    bus.on("session:done", () => {
+      throw new Error("handler threw");
+    });
+    bus.on("log", (e) => logEvents.push(e));
+
+    bus.emit({ type: "session:done", session: stubSession() });
+
+    expect(logEvents).toHaveLength(1);
+    expect(logEvents[0]!.type).toBe("log");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((logEvents[0] as any).level).toBe("error");
+  });
+
+  test("throwing handler on a 'log' event is swallowed silently (no infinite recursion)", () => {
+    const bus = new EventBus();
+    bus.on("log", () => {
+      throw new Error("even the log handler throws");
+    });
+    // This must not throw and must not recurse infinitely
+    expect(() =>
+      bus.emit({
+        type: "log",
+        level: "error",
+        message: "test",
+      }),
+    ).not.toThrow();
+  });
+});

@@ -564,3 +564,195 @@ describe("UploadEngine — pause/resume", () => {
     expect(() => engine.resumeScheduler("nonexistent")).not.toThrow();
   });
 });
+
+// ── checksumVerify flag ────────────────────────────────────────────────────────
+describe("UploadEngine — checksumVerify: false", () => {
+  test("skips SHA-256 computation and passes empty string to adapter", async () => {
+    const { file, data } = makeFile(512);
+    const adapter = makeAdapter();
+    const sha256Received: string[] = [];
+    adapter.uploadChunk.mockImplementation(
+      async (
+        _s: TransferSession,
+        _c: ChunkMeta,
+        _d: Uint8Array,
+        sha256: string,
+      ) => {
+        sha256Received.push(sha256);
+        return { providerToken: "tok" };
+      },
+    );
+
+    const store = new MemorySessionStore();
+    const bus = new EventBus();
+    const engine = new UploadEngine({
+      adapter,
+      store,
+      bus,
+      config: {
+        chunkSize: 512,
+        checksumVerify: false,
+        progressIntervalMs: 0,
+        retry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+      },
+      readerFactory: () => new ByteArrayReader(data),
+    });
+
+    const session = makeSession(file);
+    await store.save(session);
+    await engine.upload(session);
+
+    // Adapter received empty string — no SHA-256 was computed
+    expect(sha256Received.every((s) => s === "")).toBe(true);
+  });
+
+  test("checksumVerify: true (default) sends a non-empty SHA-256", async () => {
+    const { file, data } = makeFile(512);
+    const adapter = makeAdapter();
+    const sha256Received: string[] = [];
+    adapter.uploadChunk.mockImplementation(
+      async (
+        _s: TransferSession,
+        _c: ChunkMeta,
+        _d: Uint8Array,
+        sha256: string,
+      ) => {
+        sha256Received.push(sha256);
+        return { providerToken: "tok" };
+      },
+    );
+
+    const store = new MemorySessionStore();
+    const bus = new EventBus();
+    const engine = new UploadEngine({
+      adapter,
+      store,
+      bus,
+      config: {
+        chunkSize: 512,
+        checksumVerify: true,
+        progressIntervalMs: 0,
+        retry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+      },
+      readerFactory: () => new ByteArrayReader(data),
+    });
+
+    const session = makeSession(file);
+    await store.save(session);
+    await engine.upload(session);
+
+    // All chunks should have a 64-char hex SHA-256
+    expect(sha256Received.every((s) => /^[0-9a-f]{64}$/.test(s))).toBe(true);
+  });
+});
+
+// ── EventBus handler isolation (end-to-end engine test) ────────────────────────
+describe("UploadEngine — EventBus handler isolation", () => {
+  test("session reaches 'done' even if a chunk:done handler throws", async () => {
+    const { file, data } = makeFile(512);
+    const adapter = makeAdapter();
+    const store = new MemorySessionStore();
+    const bus = new EventBus();
+
+    // Register a handler that throws on every chunk:done event
+    bus.on("chunk:done", () => {
+      throw new Error("deliberate handler crash");
+    });
+
+    const logEvents: TransferEvent[] = [];
+    bus.on("log", (e) => logEvents.push(e));
+
+    const engine = makeEngine(adapter, store, bus, data);
+    const session = makeSession(file);
+    await store.save(session);
+    const result = await engine.upload(session);
+
+    // Session should still complete successfully
+    expect(result.state).toBe("done");
+    // The EventBus should have emitted at least one log:error for the throwing handler
+    const errorLogs = logEvents.filter(
+      (e) => e.type === "log" && (e as { level: string }).level === "error",
+    );
+    expect(errorLogs.length).toBeGreaterThan(0);
+  });
+
+  test("session reaches 'done' even if session:done handler throws", async () => {
+    const { file, data } = makeFile(512);
+    const adapter = makeAdapter();
+    const store = new MemorySessionStore();
+    const bus = new EventBus();
+
+    bus.on("session:done", () => {
+      throw new Error("session:done handler crash");
+    });
+
+    const engine = makeEngine(adapter, store, bus, data);
+    const session = makeSession(file);
+    await store.save(session);
+
+    // Must not throw — handler error is isolated by EventBus
+    await expect(engine.upload(session)).resolves.toMatchObject({
+      state: "done",
+    });
+  });
+});
+
+// ── Log events ─────────────────────────────────────────────────────────────────
+describe("UploadEngine — log events", () => {
+  test("emits log:warn for each retryable chunk failure", async () => {
+    const { file, data } = makeFile(512);
+    const adapter = makeAdapter();
+
+    let calls = 0;
+    adapter.uploadChunk.mockImplementation(async () => {
+      calls++;
+      if (calls === 1) throw networkError("transient");
+      return { providerToken: "tok" };
+    });
+
+    const store = new MemorySessionStore();
+    const bus = new EventBus();
+    const logEvents: TransferEvent[] = [];
+    bus.on("log", (e) => logEvents.push(e));
+
+    const engine = new UploadEngine({
+      adapter,
+      store,
+      bus,
+      config: {
+        chunkSize: 512,
+        progressIntervalMs: 0,
+        retry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+      },
+      readerFactory: () => new ByteArrayReader(data),
+    });
+
+    const session = makeSession(file);
+    await store.save(session);
+    await engine.upload(session);
+
+    const warnLogs = logEvents.filter(
+      (e) => e.type === "log" && (e as { level: string }).level === "warn",
+    );
+    expect(warnLogs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("emits log:info on successful session completion", async () => {
+    const { file, data } = makeFile(512);
+    const adapter = makeAdapter();
+    const store = new MemorySessionStore();
+    const bus = new EventBus();
+    const logEvents: TransferEvent[] = [];
+    bus.on("log", (e) => logEvents.push(e));
+
+    const engine = makeEngine(adapter, store, bus, data);
+    const session = makeSession(file);
+    await store.save(session);
+    await engine.upload(session);
+
+    const infoLogs = logEvents.filter(
+      (e) => e.type === "log" && (e as { level: string }).level === "info",
+    );
+    expect(infoLogs.length).toBeGreaterThanOrEqual(1);
+  });
+});

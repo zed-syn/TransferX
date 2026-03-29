@@ -49,6 +49,7 @@
  */
 
 import * as crypto from "crypto";
+import { createRequire } from "module";
 import { computeChunks } from "../chunker/Chunker.js";
 import type { IChunkReader } from "../chunker/Chunker.js";
 import { Scheduler } from "../scheduler/Scheduler.js";
@@ -68,7 +69,13 @@ import {
   concurrentUploadError,
   sessionNotFoundError,
   invalidStateError,
+  fileChangedError,
 } from "../types/errors.js";
+
+// Module-level require function — works in both CJS (compiled output) and
+// forward-compatible with ESM. Using createRequire avoids the implicit CJS
+// `require` global that is not available in pure-ESM contexts.
+const _require = createRequire(__filename);
 
 // ── Public options ────────────────────────────────────────────────────────────
 
@@ -84,6 +91,19 @@ export interface UploadEngineOptions {
    * the engine testable without touching the filesystem.
    */
   readerFactory?: (file: FileDescriptor) => IChunkReader;
+  /**
+   * Optional function to stat a file by path.
+   * When provided, `resumeSession()` calls this for Node uploads and compares
+   * the returned `mtimeMs` against the value stored in `session.file.mtimeMs`.
+   * If they differ the session is aborted with a `fileChangedError`.
+   *
+   * Example (Node.js):
+   * ```ts
+   * import { stat } from 'fs/promises';
+   * fileStatFn: (path) => stat(path)
+   * ```
+   */
+  fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
 }
 
 // ── Minimal in-memory reader for use in tests without a real file ─────────────
@@ -111,6 +131,9 @@ export class UploadEngine {
   private readonly _bus: IEventBus;
   private readonly _config: EngineConfig;
   private readonly _readerFactory: (file: FileDescriptor) => IChunkReader;
+  private readonly _fileStatFn:
+    | ((path: string) => Promise<{ mtimeMs: number }>)
+    | undefined;
 
   /** sessionId → active upload handle. Prevents concurrent uploads of same session. */
   private readonly _activeUploads = new Map<string, ActiveUpload>();
@@ -122,15 +145,18 @@ export class UploadEngine {
     this._store = opts.store;
     this._bus = opts.bus;
     this._config = resolveEngineConfig(opts.config ?? {});
+    this._fileStatFn = opts.fileStatFn;
     this._readerFactory =
       opts.readerFactory ??
       ((file) => {
-        // Dynamic import to avoid hard-coupling to Node in browser bundles.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { NodeChunkReader } =
-          require("../chunker/NodeChunkReader.js") as {
-            NodeChunkReader: new (p: string) => IChunkReader;
-          };
+        // Lazy-load NodeChunkReader to avoid hard-coupling to Node in browser
+        // bundles. Using createRequire (module-level) ensures compatibility with
+        // both CJS output and future ESM callers.
+        const { NodeChunkReader } = _require(
+          "../chunker/NodeChunkReader.js",
+        ) as {
+          NodeChunkReader: new (p: string) => IChunkReader;
+        };
         if (!file.path) {
           throw new Error(
             "UploadEngine: file.path is required when using the default NodeChunkReader. " +
@@ -218,6 +244,20 @@ export class UploadEngine {
       throw concurrentUploadError(sessionId);
     }
 
+    // ----- 2b. File-change detection (Node.js) ───────────────────────────
+    // If a stat function was injected and the session recorded the file's
+    // mtime at creation time, verify the file hasn't changed since then.
+    if (
+      this._fileStatFn &&
+      session.file.path &&
+      session.file.mtimeMs !== undefined
+    ) {
+      const current = await this._fileStatFn(session.file.path);
+      if (current.mtimeMs !== session.file.mtimeMs) {
+        throw fileChangedError(sessionId);
+      }
+    }
+
     // ----- 3. Reconcile remote state ─────────────────────────────────────
     transitionSession(session, "reconciling");
     this._bus.emit({ type: "session:reconciling", session });
@@ -249,6 +289,17 @@ export class UploadEngine {
     for (const c of pendingChunks) {
       if (c.status === "uploading") c.status = "pending";
     }
+
+    this._bus.emit({
+      type: "log",
+      level: "info",
+      message: `[TransferX] Reconcile complete for session ${sessionId}: ${pendingChunks.length} chunk(s) pending, ${session.chunks.length - pendingChunks.length} already done`,
+      context: {
+        sessionId,
+        pending: pendingChunks.length,
+        done: session.chunks.length - pendingChunks.length,
+      },
+    });
 
     if (pendingChunks.length === 0) {
       // All chunks already done locally — go straight to complete
@@ -437,12 +488,14 @@ export class UploadEngine {
           async () => {
             if (isCancelled()) return;
             const data = await reader.read(chunk.offset, chunk.size);
-            const sha256Hex = crypto
-              .createHash("sha256")
-              .update(data)
-              .digest("hex");
 
-            chunk.checksum = sha256Hex;
+            // Compute SHA-256 only when integrity verification is enabled.
+            // Skip the CPU cost when the caller opts out (checksumVerify: false).
+            const sha256Hex = this._config.checksumVerify
+              ? crypto.createHash("sha256").update(data).digest("hex")
+              : "";
+            if (sha256Hex) chunk.checksum = sha256Hex;
+
             const result = await this._adapter.uploadChunk(
               session,
               chunk,
@@ -465,6 +518,17 @@ export class UploadEngine {
                 chunk: c,
                 error,
                 willRetry: attempt < this._config.retry.maxAttempts,
+              });
+              this._bus.emit({
+                type: "log",
+                level: "warn",
+                message: `[TransferX] chunk ${c.index} attempt ${attempt} failed (${error.category}): ${error.message}`,
+                context: {
+                  sessionId: session.id,
+                  chunkIndex: c.index,
+                  attempt,
+                  category: error.category,
+                },
               });
             },
           },
@@ -547,6 +611,12 @@ export class UploadEngine {
     transitionSession(session, "done");
     session.updatedAt = Date.now();
     this._bus.emit({ type: "session:done", session });
+    this._bus.emit({
+      type: "log",
+      level: "info",
+      message: `[TransferX] Session ${session.id} completed successfully`,
+      context: { sessionId: session.id, totalBytes: session.file.size },
+    });
     await this._store.save(session);
     return session;
   }

@@ -51,16 +51,26 @@ export interface ConcurrencyPolicy {
   /**
    * Minimum concurrency the adaptive engine will shrink to.
    * Default: 1
+   *
+   * @remarks **NOT YET IMPLEMENTED** — this field is stored but has no effect
+   * in the current release. Adaptive concurrency is planned for v1.1.
    */
   min: number;
   /**
    * Maximum concurrency the adaptive engine will grow to.
    * Default: 16
+   *
+   * @remarks **NOT YET IMPLEMENTED** — this field is stored but has no effect
+   * in the current release. Adaptive concurrency is planned for v1.1.
    */
   max: number;
   /**
    * Whether to enable adaptive concurrency adjustment.
    * Default: true
+   *
+   * @remarks **NOT YET IMPLEMENTED** — setting this to `true` or `false` has
+   * no effect in the current release. The engine always uses `initial` as a
+   * fixed concurrency value. Adaptive concurrency is planned for v1.1.
    */
   adaptive: boolean;
 }

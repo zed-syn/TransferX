@@ -68,7 +68,25 @@ export class EventBus implements IEventBus {
     // Snapshot before dispatch — allows handlers to add/remove listeners safely.
     const snapshot = [...set];
     for (const handler of snapshot) {
-      handler(event);
+      try {
+        handler(event);
+      } catch (err) {
+        // A throwing consumer handler must NEVER crash the engine.
+        // Emit a structured log event so the error is still observable.
+        // Guard against infinite recursion: do not re-emit for 'log' events.
+        if (event.type !== "log") {
+          try {
+            this.emit({
+              type: "log",
+              level: "error",
+              message: `EventBus: handler for "${event.type}" threw an unhandled error`,
+              context: { error: String(err) },
+            });
+          } catch {
+            // If even the log-event handler throws, swallow silently.
+          }
+        }
+      }
     }
   }
 

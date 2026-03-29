@@ -2,12 +2,12 @@
 
 ![npm](https://img.shields.io/npm/v/@transferx/sdk)
 ![license](https://img.shields.io/github/license/zed-syn/TransferX)
-![tests](https://img.shields.io/badge/tests-168_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-185_passed-brightgreen)
 
 Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability — retries, resumability, observability, and pluggable storage backends.
 
 ```
-12 test suites · 168 tests · 0 compile errors
+12 test suites · 185 tests · 0 compile errors
 ```
 
 ---
@@ -62,7 +62,7 @@ const { upload, bus, config, store } = createB2Engine({
   store: new FileSessionStore("./.transferx-sessions"),
   config: {
     chunkSize: 10 * 1024 * 1024, // 10 MiB per chunk
-    concurrency: { initial: 4, min: 1, max: 16, adaptive: false },
+    concurrency: { initial: 4 }, // min/max/adaptive stored but not yet effective
   },
 });
 
@@ -122,12 +122,28 @@ const result = await upload(session);
 
 ### `ConcurrencyPolicy`
 
-| Field      | Default | Description                        |
-| ---------- | ------- | ---------------------------------- |
-| `initial`  | `4`     | Starting concurrency               |
-| `min`      | `1`     | Minimum (adaptive lower bound)     |
-| `max`      | `16`    | Maximum (adaptive upper bound)     |
-| `adaptive` | `true`  | Enable adaptive concurrency tuning |
+| Field      | Default | Description                                            |
+| ---------- | ------- | ------------------------------------------------------ |
+| `initial`  | `4`     | Fixed concurrency — the only field currently in effect |
+| `min`      | `1`     | ⚠️ NOT YET IMPLEMENTED — stored but has no effect      |
+| `max`      | `16`    | ⚠️ NOT YET IMPLEMENTED — stored but has no effect      |
+| `adaptive` | `false` | ⚠️ NOT YET IMPLEMENTED — stored but has no effect      |
+
+### `B2AdapterOptions` (via `createB2Engine({ b2: { … } })`)
+
+| Field              | Type       | Default    | Description                                                         |
+| ------------------ | ---------- | ---------- | ------------------------------------------------------------------- |
+| `applicationKeyId` | `string`   | —          | Backblaze application key ID                                        |
+| `applicationKey`   | `string`   | —          | Backblaze application key secret                                    |
+| `bucketId`         | `string`   | —          | Target bucket ID                                                    |
+| `timeoutMs`        | `number`   | `120000`   | Per-request HTTP timeout in ms. Exceeded requests throw `network`   |
+| `onLog`            | `function` | auto-wired | Structured log callback — `createB2Engine()` routes this to the bus |
+
+### `UploadEngineOptions` (advanced / custom adapter)
+
+| Field        | Type       | Default     | Description                                                                                                                                                                                                                     |
+| ------------ | ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fileStatFn` | `function` | `undefined` | `(path) => Promise<{ mtimeMs }>`. When provided, `resumeSession()` throws `fileChangedError` if the file's mtime differs from the value stored in the session. Useful for detect-and-reject modified files before re-uploading. |
 
 ---
 
@@ -150,6 +166,7 @@ Subscribe via `bus.on(type, handler)`. All events are strongly typed.
 | `chunk:failed`        | `{ session, chunk, error, willRetry }` | Attempt failed, may retry               |
 | `chunk:fatal`         | `{ session, chunk, error }`            | Chunk exhausted retry budget            |
 | `progress`            | `{ progress }`                         | Throttled progress snapshot             |
+| `log`                 | `{ level, message, context? }`         | Structured log from engine or adapter   |
 
 ### `TransferProgress` shape
 
@@ -361,6 +378,90 @@ await resumeSession(session.id);
 
 ---
 
+## File Change Detection
+
+When `fileStatFn` is provided to the engine, `resumeSession()` checks whether
+the source file has been modified since the session was created, and throws a
+`fileChangedError` if so.
+
+Store `mtimeMs` in the session's `FileDescriptor` at creation time:
+
+```typescript
+import * as fs from "fs";
+import {
+  createB2Engine,
+  makeUploadSession,
+  FileSessionStore,
+} from "@transferx/sdk";
+import { UploadEngine, EventBus, MemorySessionStore } from "@transferx/core";
+
+const stat = fs.statSync("/path/to/video.mp4");
+const session = makeUploadSession(
+  "upload-01",
+  {
+    name: "video.mp4",
+    size: stat.size,
+    mimeType: "video/mp4",
+    path: "/path/to/video.mp4",
+    mtimeMs: stat.mtimeMs, // ← store mtime for change detection
+  },
+  "uploads/2024/video.mp4",
+  config,
+);
+```
+
+Then pass `fileStatFn` when constructing the engine (or use the advanced
+`UploadEngine` directly):
+
+```typescript
+// Using UploadEngine directly:
+const engine = new UploadEngine({
+  adapter,
+  store,
+  bus,
+  config: resolveEngineConfig(),
+  fileStatFn: (path) => fs.promises.stat(path), // returns { mtimeMs }
+});
+
+// On resume, if the file was modified:
+try {
+  await engine.resumeSession(sessionId);
+} catch (err) {
+  if (err.category === "fileChanged") {
+    console.error("File was modified — please start a new upload session.");
+  }
+}
+```
+
+If `fileStatFn` is not provided the check is skipped and uploads resume as
+before.
+
+---
+
+## Observability via Log Events
+
+The engine and B2 adapter emit structured `log` events that can be used for
+application logging, monitoring, or debugging without coupling to a logger:
+
+```typescript
+bus.on("log", ({ level, message, context }) => {
+  // level: "debug" | "info" | "warn" | "error"
+  myLogger[level]?.(message, context);
+});
+```
+
+Log events are emitted for:
+
+| Situation                         | `level` |
+| --------------------------------- | ------- |
+| Chunk retryable failure (backoff) | `warn`  |
+| Reconcile complete on resume      | `info`  |
+| Session completed successfully    | `info`  |
+| B2 auth token expired, refreshing | `warn`  |
+| EventBus handler threw            | `error` |
+
+---
+
 ## Architecture
 
 ```
@@ -406,22 +507,22 @@ npx jest --testPathPattern="engine" --runInBand
 
 ### Test suites
 
-| Suite                  | Tests | Coverage                           |
-| ---------------------- | ----- | ---------------------------------- |
-| `chunk.test.ts`        | 8     | ChunkMeta invariants               |
-| `session.test.ts`      | 37    | State machine, transitions         |
-| `chunker.test.ts`      | 14    | File splitting edge cases          |
-| `scheduler.test.ts`    | 11    | Concurrency, pause/resume, drain   |
-| `retry.test.ts`        | 11    | Backoff, non-retryable fast-fail   |
-| `progress.test.ts`     | 13    | EMA speed, ETA, interval emission  |
-| `store.memory.test.ts` | 14    | CRUD, deep-clone isolation         |
-| `store.file.test.ts`   | 12    | Atomic writes, corruption guard    |
-| `eventbus.test.ts`     | 16    | on/off/emit/clear, dispatch safety |
-| `engine.test.ts`       | 34    | Full upload lifecycle              |
-| `resume.test.ts`       | 17    | Resume, cancel, reconcile, guards  |
-| `B2Adapter.test.ts`    | 15    | Mock-fetch B2 lifecycle            |
+| Suite                  | Tests | Coverage                                              |
+| ---------------------- | ----- | ----------------------------------------------------- |
+| `chunk.test.ts`        | 8     | ChunkMeta invariants                                  |
+| `session.test.ts`      | 37    | State machine, transitions                            |
+| `chunker.test.ts`      | 14    | File splitting edge cases                             |
+| `scheduler.test.ts`    | 11    | Concurrency, pause/resume, drain                      |
+| `retry.test.ts`        | 11    | Backoff, non-retryable fast-fail                      |
+| `progress.test.ts`     | 13    | EMA speed, ETA, interval emission                     |
+| `store.memory.test.ts` | 14    | CRUD, deep-clone isolation                            |
+| `store.file.test.ts`   | 12    | Atomic writes, corruption guard                       |
+| `eventbus.test.ts`     | 20    | on/off/emit/clear, dispatch safety, handler isolation |
+| `engine.test.ts`       | 40    | Full upload lifecycle, checksumVerify, log events     |
+| `resume.test.ts`       | 21    | Resume, cancel, reconcile, file-change detection      |
+| `B2Adapter.test.ts`    | 18    | Mock-fetch B2 lifecycle, auth retry, HTTP timeout     |
 
-**Total: 168 tests**
+**Total: 185 tests**
 
 ---
 

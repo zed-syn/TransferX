@@ -61,7 +61,11 @@ export const RESUMABLE_STATES = new Set<SessionState>([
 
 // ── Transfer direction ───────────────────────────────────────────────────────
 
-export type TransferDirection = "upload" | "download";
+/**
+ * Currently only upload is implemented.
+ * Download is reserved for a future release and will throw "not implemented" if attempted.
+ */
+export type TransferDirection = "upload";
 
 // ── File source descriptor ───────────────────────────────────────────────────
 
@@ -81,6 +85,13 @@ export interface FileDescriptor {
    * Browser: left empty — caller provides a Blob handle separately.
    */
   path?: string;
+  /**
+   * Last-modified timestamp in milliseconds (from `fs.stat().mtimeMs`) at the
+   * time the session was created. When provided and `UploadEngineOptions.fileStatFn`
+   * is set, the engine checks this on resume and throws `fileChangedError` if the
+   * file has been modified since the session was created.
+   */
+  mtimeMs?: number;
 }
 
 // ── The session itself ───────────────────────────────────────────────────────

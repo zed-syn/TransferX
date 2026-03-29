@@ -110,7 +110,17 @@ export function createB2Engine(opts: CreateB2EngineOptions): B2Engine {
   const config = resolveEngineConfig(opts.config ?? {});
   const bus = new EventBus();
   const store = opts.store ?? new MemorySessionStore();
-  const adapter = new B2Adapter(opts.b2);
+  const adapter = new B2Adapter({
+    ...opts.b2,
+    // Wire adapter-level log events into the shared event bus so consumers
+    // see auth-refresh warnings alongside engine-level log events.
+    onLog: (level, message, context) =>
+      bus.emit(
+        context !== undefined
+          ? { type: "log", level, message, context }
+          : { type: "log", level, message },
+      ),
+  });
 
   const engine = new UploadEngine({
     adapter,
