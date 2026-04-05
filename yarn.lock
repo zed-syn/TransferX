@@ -1580,51 +1580,78 @@
   dependencies:
     tslib "^2.6.2"
 
-"@transferx/adapter-b2@1.1.1", "@transferx/adapter-b2@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\adapters\\b2":
-  version "1.1.1"
+"@transferx/adapter-b2@1.1.3":
+  version "1.1.3"
+  resolved "https://registry.npmjs.org/@transferx/adapter-b2/-/adapter-b2-1.1.3.tgz"
+  integrity sha512-hk4XP6eplR8sAQ/O9XrqWgYtU0rMsdePFCFp6OtUo6LdhQAMnsnWNgiiuZiMNE6k64ALbOLg/3zcCmhpUYbTIw==
+  dependencies:
+    "@transferx/core" "1.1.3"
+
+"@transferx/adapter-b2@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\adapters\\b2":
+  version "1.1.4"
   resolved "file:packages/adapters/b2"
   dependencies:
-    "@transferx/core" "1.1.1"
+    "@transferx/core" "1.1.3"
 
-"@transferx/adapter-http@1.1.1", "@transferx/adapter-http@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\adapters\\http":
-  version "1.1.1"
+"@transferx/adapter-http@1.1.3":
+  version "1.1.3"
+  resolved "https://registry.npmjs.org/@transferx/adapter-http/-/adapter-http-1.1.3.tgz"
+  integrity sha512-JKCO20+ikCG/U4sTCnkmkD9MFNceH7lfHscj50kgVrFG9Gzlp4VMjEYDTiEDdHWMlgnPOoj3rGCVu3r0Laa4zQ==
+  dependencies:
+    "@transferx/core" "1.1.3"
+
+"@transferx/adapter-http@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\adapters\\http":
+  version "1.1.4"
   resolved "file:packages/adapters/http"
   dependencies:
-    "@transferx/core" "1.1.1"
+    "@transferx/core" "1.1.3"
 
-"@transferx/adapter-s3@1.1.1", "@transferx/adapter-s3@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\adapters\\s3":
-  version "1.1.1"
+"@transferx/adapter-s3@1.1.3":
+  version "1.1.3"
+  resolved "https://registry.npmjs.org/@transferx/adapter-s3/-/adapter-s3-1.1.3.tgz"
+  integrity sha512-jXn3VIZzR+HJGWlVh9PK7PZddYE6bpBR4O68NRbo8m2XScnFaglycRk8jWOgmruJxiC66L2pjKwH7fWfJeDUKw==
+  dependencies:
+    "@aws-sdk/client-s3" "^3.0.0"
+    "@transferx/core" "1.1.3"
+
+"@transferx/adapter-s3@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\adapters\\s3":
+  version "1.1.4"
   resolved "file:packages/adapters/s3"
   dependencies:
     "@aws-sdk/client-s3" "^3.0.0"
-    "@transferx/core" "1.1.1"
+    "@transferx/core" "1.1.3"
 
-"@transferx/core@1.1.1", "@transferx/core@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\core":
-  version "1.1.1"
+"@transferx/core@1.1.3":
+  version "1.1.3"
+  resolved "https://registry.npmjs.org/@transferx/core/-/core-1.1.3.tgz"
+  integrity sha512-Jy8GPveLMtRM3rSUQIB5VzlQgG2886Tm3lE5pCco0Qo2ouEjIEqTxygRPt2/K4s85iEXmk4JfS9qRvXFR3/KIQ==
+
+"@transferx/core@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\core":
+  version "1.1.5"
   resolved "file:packages/core"
 
-"@transferx/downloader@1.3.1":
-  version "1.3.1"
-  resolved "https://registry.npmjs.org/@transferx/downloader/-/downloader-1.3.1.tgz"
-  integrity sha512-Y/Wn75lhdbmoUv61/Q/juQVkFN+GBDKDYVsltxlXeqSaUyYqCvhSFYVTTjX4Qi41VT0UwMG0al8PsFt3AGUpDg==
+"@transferx/downloader@1.3.2":
+  version "1.3.2"
+  resolved "https://registry.npmjs.org/@transferx/downloader/-/downloader-1.3.2.tgz"
+  integrity sha512-MYLQFGy/IPR4pdU71GPDMuRU7NcGEBTSNfsKuh4HLI19t5f2YlgASutmYj9FUBL/8cbg3P218gkoX49LZ+Odpg==
   dependencies:
     undici "^6.21.0"
 
 "@transferx/downloader@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\downloader":
-  version "1.3.2"
+  version "1.3.3"
   resolved "file:packages/downloader"
   dependencies:
     undici "^6.21.0"
 
 "@transferx/sdk@file:C:\\Users\\PC\\Documents\\Tool-Script\\UploadX\\packages\\sdk":
-  version "1.3.3"
+  version "1.3.4"
   resolved "file:packages/sdk"
   dependencies:
-    "@transferx/adapter-b2" "1.1.1"
-    "@transferx/adapter-http" "1.1.1"
-    "@transferx/adapter-s3" "1.1.1"
-    "@transferx/core" "1.1.1"
-    "@transferx/downloader" "1.3.1"
+    "@transferx/adapter-b2" "1.1.3"
+    "@transferx/adapter-http" "1.1.3"
+    "@transferx/adapter-s3" "1.1.3"
+    "@transferx/core" "1.1.3"
+    "@transferx/downloader" "1.3.2"
 
 "@types/babel__core@^7.1.14":
   version "7.20.5"
