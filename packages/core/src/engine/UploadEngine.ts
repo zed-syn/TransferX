@@ -61,12 +61,17 @@ import type { IEventBus } from "../types/events.js";
 import type { EngineConfig } from "../types/config.js";
 import { resolveEngineConfig } from "../types/config.js";
 import type { FileDescriptor, TransferSession } from "../types/session.js";
-import { transitionSession, getTransferredBytes } from "../types/session.js";
+import {
+  transitionSession,
+  getTransferredBytes,
+  TERMINAL_STATES,
+} from "../types/session.js";
 import type { ChunkMeta } from "../types/chunk.js";
 import {
   networkError,
   zeroByteError,
   concurrentUploadError,
+  duplicateUploadError,
   sessionNotFoundError,
   invalidStateError,
   fileChangedError,
@@ -183,6 +188,43 @@ export class UploadEngine {
     // Guard: prevent concurrent uploads of the same session
     if (this._activeUploads.has(session.id)) {
       throw concurrentUploadError(session.id);
+    }
+
+    // ── Stale session guard ─────────────────────────────────────────────────
+    // If this session ID already exists in the store in a non-'created' state,
+    // the caller is misusing the API.  They should call resumeSession() for
+    // in-progress sessions, or use a new session ID for a genuine re-upload.
+    const persisted = await this._store.load(session.id);
+    if (persisted !== undefined && persisted.state !== "created") {
+      if (persisted.state === "done") {
+        throw invalidStateError(
+          session.id,
+          "done",
+          "upload — session already completed. Create a new session ID for a fresh upload.",
+        );
+      }
+      throw invalidStateError(
+        session.id,
+        persisted.state,
+        "upload — session already started. Call resumeSession() to resume this session.",
+      );
+    }
+
+    // ── Duplicate targetKey guard ───────────────────────────────────────────
+    // Block if another non-terminal session already targets the same remote key.
+    // This prevents two concurrent uploads racing to write the same object and
+    // protects against accidentally re-uploading an already-in-progress file.
+    // Performance note: listAll() is O(n) file reads. For typical video pipelines
+    // (hundreds to low thousands of sessions) this is negligible per upload start.
+    const allSessions = await this._store.listAll();
+    const duplicate = allSessions.find(
+      (s) =>
+        s.targetKey === session.targetKey &&
+        s.id !== session.id &&
+        !TERMINAL_STATES.has(s.state),
+    );
+    if (duplicate) {
+      throw duplicateUploadError(session.targetKey, duplicate.id);
     }
 
     // ----- 1. Initialise remote session ----------------------------------------
@@ -720,4 +762,41 @@ export function makeUploadSession(
     transferredBytes: 0,
     sessionRetries: 0,
   };
+}
+
+/**
+ * Generate a deterministic, stable session ID from a file path, remote key, and
+ * file size.  Using the same arguments always produces the same ID, which is the
+ * foundation of duplicate-upload detection:
+ *
+ *   - On first upload, makeSessionId() generates a fresh ID that's saved to the
+ *     store.  The session persists across restarts.
+ *   - On restart or re-attempt with the same arguments, makeSessionId() returns
+ *     the SAME ID.  engine.upload() finds the existing session in the store, sees
+ *     it is not 'created', and throws — pointing the caller to resumeSession()
+ *     for recovery or a new ID for a genuine fresh upload.
+ *
+ * Determinism formula:  SHA-256(filePath + "|" + targetKey + "|" + fileSizeBytes)
+ *                        truncated to 24 hex characters (96 bits of uniqueness).
+ *
+ * @example
+ * ```typescript
+ * import { makeSessionId, makeUploadSession, FileSessionStore } from '@transferx/sdk';
+ * import { stat } from 'fs/promises';
+ *
+ * const { size } = await stat(filePath);
+ * const id = makeSessionId(filePath, 'videos/ep1.mp4', size);
+ * // id is always the same for this file+key+size combination
+ * ```
+ */
+export function makeSessionId(
+  filePath: string,
+  targetKey: string,
+  fileSizeBytes: number,
+): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${filePath}|${targetKey}|${fileSizeBytes}`)
+    .digest("hex")
+    .slice(0, 24);
 }

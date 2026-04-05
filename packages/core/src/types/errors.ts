@@ -21,6 +21,7 @@ export type ErrorCategory =
   | "fileChanged" // source file changed since session created → NOT retryable
   | "zeroByte" // empty file can't use multipart upload → NOT retryable
   | "concurrentUpload" // engine already running this session → NOT retryable
+  | "duplicateUpload" // another non-terminal session targets the same remoteKey → NOT retryable
   | "fatal" // unrecoverable state → NOT retryable
   | "unknown"; // catch-all → retryable (be conservative)
 
@@ -170,5 +171,21 @@ export function concurrentUploadError(sessionId: string): TransferError {
     undefined,
     undefined,
     sessionId,
+  );
+}
+
+export function duplicateUploadError(
+  targetKey: string,
+  existingSessionId: string,
+): TransferError {
+  return new TransferError(
+    `Duplicate upload blocked: remote key '${targetKey}' is already targeted by ` +
+      `non-terminal session '${existingSessionId}'. ` +
+      `Call resumeSession('${existingSessionId}') to continue that upload, ` +
+      `or cancel it before starting a new one.`,
+    "duplicateUpload",
+    undefined,
+    undefined,
+    existingSessionId,
   );
 }

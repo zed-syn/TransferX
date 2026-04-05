@@ -132,7 +132,6 @@ import { S3Adapter, R2Adapter } from "@transferx/adapter-s3";
 import type { S3AdapterOptions, R2AdapterOptions } from "@transferx/adapter-s3";
 import { UploadEngine } from "@transferx/core";
 import { EventBus } from "@transferx/core";
-import { MemorySessionStore } from "@transferx/core";
 import { resolveEngineConfig } from "@transferx/core";
 import type { EngineConfig, TransferSession } from "@transferx/core";
 import type { ISessionStore } from "@transferx/core";
@@ -281,11 +280,18 @@ export interface CreateB2EngineOptions {
    */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory (state lost on restart).
-   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
-   * STRONGLY RECOMMENDED for production / large uploads.
+   * Durable session store. **Required.**
+   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence
+   * that survives process restarts. This is mandatory for production uploads
+   * because without persistence, any crash or restart loses all progress.
+   *
+   * @example
+   * ```typescript
+   * import { FileSessionStore } from '@transferx/core';
+   * store: new FileSessionStore('/absolute/path/to/.transferx-sessions')
+   * ```
    */
-  store?: ISessionStore;
+  store: ISessionStore;
   /**
    * File-stat callback for change detection on resume.
    * When provided, `resumeSession()` compares the file's current `mtimeMs`
@@ -322,7 +328,7 @@ export type B2Engine = EngineHandle;
 export function createB2Engine(opts: CreateB2EngineOptions): EngineHandle {
   const config = resolveEngineConfig(opts.config ?? {});
   const bus = new EventBus();
-  const store = opts.store ?? new MemorySessionStore();
+  const store = opts.store;
   const adapter = new B2Adapter({
     ...opts.b2,
     onLog: _makeLogFn(bus),
@@ -359,10 +365,10 @@ export interface CreateS3EngineOptions {
   /** Partial engine config — missing fields use defaults. */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory (state lost on restart).
-   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   * Durable session store. **Required.**
+   * @see {@link CreateB2EngineOptions.store}
    */
-  store?: ISessionStore;
+  store: ISessionStore;
   /**
    * File-stat callback for change detection on resume.
    * @see {@link CreateB2EngineOptions.fileStatFn}
@@ -398,7 +404,7 @@ export interface CreateS3EngineOptions {
 export function createS3Engine(opts: CreateS3EngineOptions): EngineHandle {
   const config = resolveEngineConfig(opts.config ?? {});
   const bus = new EventBus();
-  const store = opts.store ?? new MemorySessionStore();
+  const store = opts.store;
   const adapter = new S3Adapter({
     ...opts.s3,
     onLog: _makeLogFn(bus),
@@ -435,10 +441,10 @@ export interface CreateR2EngineOptions {
   /** Partial engine config — missing fields use defaults. */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory (state lost on restart).
-   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   * Durable session store. **Required.**
+   * @see {@link CreateB2EngineOptions.store}
    */
-  store?: ISessionStore;
+  store: ISessionStore;
   /**
    * File-stat callback for change detection on resume.
    * @see {@link CreateB2EngineOptions.fileStatFn}
@@ -475,7 +481,7 @@ export interface CreateR2EngineOptions {
 export function createR2Engine(opts: CreateR2EngineOptions): EngineHandle {
   const config = resolveEngineConfig(opts.config ?? {});
   const bus = new EventBus();
-  const store = opts.store ?? new MemorySessionStore();
+  const store = opts.store;
   const adapter = new R2Adapter({
     ...opts.r2,
     onLog: _makeLogFn(bus),
@@ -524,10 +530,10 @@ export interface CreateHttpEngineOptions {
   /** Partial engine config — missing fields use defaults (10 MiB chunks, 4 concurrent, 5 retries). */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory (state lost on restart).
-   * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   * Durable session store. **Required.**
+   * @see {@link CreateB2EngineOptions.store}
    */
-  store?: ISessionStore;
+  store: ISessionStore;
   /**
    * File-stat callback for change detection on resume.
    * @see {@link CreateB2EngineOptions.fileStatFn}
@@ -562,7 +568,7 @@ export interface CreateHttpEngineOptions {
 export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
   const config = resolveEngineConfig(opts.config ?? {});
   const bus = new EventBus();
-  const store = opts.store ?? new MemorySessionStore();
+  const store = opts.store;
   const adapter = new HttpAdapter(opts.http);
 
   const engine = new UploadEngine({
@@ -595,12 +601,14 @@ export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
  * session via the provided engine.
  *
  * Call this **once at startup** to recover any in-progress uploads that were
- * interrupted by a process crash or restart. Each resumed session runs
- * concurrently in the background; outcomes are delivered via the engine's
- * event bus (`session:done` / `session:failed`).
+ * interrupted by a process crash or restart.
  *
- * For batch uploads with back-pressure, prefer wiring each session ID into a
- * `TransferManager.enqueueResume()` call instead of using this helper directly.
+ * Resumes are throttled by `options.maxConcurrent` (default: 4) so that a store
+ * with hundreds of failed sessions does not fire hundreds of simultaneous HTTP
+ * connections. Excess sessions wait until a slot opens.
+ *
+ * For richer back-pressure control use `TransferManager.restoreFromStore()`
+ * instead — it respects `maxConcurrentUploads` automatically.
  *
  * @example
  * ```typescript
@@ -613,7 +621,7 @@ export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
  *   onCompleted: async (meta) => { /* create DB record *\/ },
  * });
  *
- * // On every startup:
+ * // On every startup — resume up to 4 sessions concurrently:
  * const { resuming, skipped } = await restoreAllSessions(store, engine);
  * console.log(`Resuming ${resuming.length} session(s), skipped ${skipped.length} already-done.`);
  * ```
@@ -621,21 +629,62 @@ export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
 export async function restoreAllSessions(
   store: ISessionStore,
   engine: Pick<EngineHandle, "resumeSession">,
+  options?: {
+    /**
+     * Maximum number of concurrent `resumeSession()` calls in flight at once.
+     * Prevents a large store from saturating network connections on startup.
+     * Default: 4
+     */
+    maxConcurrent?: number;
+  },
 ): Promise<{ resuming: string[]; skipped: string[] }> {
+  const maxConcurrent = Math.max(1, options?.maxConcurrent ?? 4);
   const sessions = await store.listAll();
   const resuming: string[] = [];
   const skipped: string[] = [];
+  const toResume: string[] = [];
 
   for (const session of sessions) {
     if (session.state === "done" || session.state === "cancelled") {
       skipped.push(session.id);
-      continue;
+    } else {
+      toResume.push(session.id);
     }
-    // Fire-and-forget: the engine runs the resume asynchronously.
-    // All outcomes (success / failure) surface via the bus event system.
-    engine.resumeSession(session.id).catch(() => undefined);
-    resuming.push(session.id);
   }
+
+  // Throttled async pool: never more than maxConcurrent resumes in-flight.
+  await new Promise<void>((resolve) => {
+    if (toResume.length === 0) {
+      resolve();
+      return;
+    }
+
+    let active = 0;
+    let index = 0;
+    let settled = 0;
+
+    function dispatch(): void {
+      while (active < maxConcurrent && index < toResume.length) {
+        const id = toResume[index++]!;
+        resuming.push(id);
+        active++;
+        engine
+          .resumeSession(id)
+          .catch(() => undefined)
+          .finally(() => {
+            active--;
+            settled++;
+            if (settled === toResume.length) {
+              resolve();
+            } else {
+              dispatch();
+            }
+          });
+      }
+    }
+
+    dispatch();
+  });
 
   return { resuming, skipped };
 }

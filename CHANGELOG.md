@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [1.3.0] — 2026-04-01
 
 ### Added — `@transferx/downloader`
+
 - **Connection pooling via undici** (`HttpClient.ts`): new `IHttpClient` abstraction
   with `FetchHttpClient` (test/fallback path) and `PooledHttpClient` (production, uses
   `undici.Pool`). A single pool is created per download task and shared across all
@@ -27,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`undici ^6.21.0`** added as a peer/optional dependency of `@transferx/downloader`.
 
 ### Changed — `@transferx/downloader`
+
 - `DownloadEngine._downloadChunk` now accepts an `IHttpClient` parameter instead of a
   raw `fetchFn`. All callers are internal; no public API change.
 
@@ -35,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [1.2.0] — 2026-03-30
 
 ### Added — `@transferx/downloader`
+
 - **Byte-level sub-chunk resume** (`DownloadEngine`): on retry the engine reads
   `chunk.bytesWritten` and rounds it down to the nearest 1 MiB boundary
   (`RESUME_GRANULARITY`). The `Range` header and write-offset are both adjusted
@@ -66,16 +69,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`fsyncIntervalChunks`** field added to `DownloadConfig` (default 8).
 
 ### Fixed — `@transferx/downloader`
+
 - **`RangePlanner.rehydrate`**: previously reset `bytesWritten` to 0 for every
   `pending` / `failed` chunk, discarding partial write progress. Now preserves
   `bytesWritten` so the byte-level resume path gets correct data.
 
 ### Added — `@transferx/sdk`
+
 - Re-exports `DownloadManager`, `DownloadMetrics` and all associated types so
   SDK consumers get the full download feature set without importing the
   lower-level package directly.
 
 ### Tests
+
 - 17 new tests added across 6 new suites: byte-level sub-chunk resume, FileWriter
   pre-allocation / fdatasync, DownloadManager, DownloadMetrics, ChunkScheduler
   throughput signal. Total test count: 302 (up from 285).

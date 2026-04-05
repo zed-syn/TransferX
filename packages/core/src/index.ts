@@ -52,6 +52,7 @@ export {
   fileChangedError,
   zeroByteError,
   concurrentUploadError,
+  duplicateUploadError,
 } from "./types/errors.js";
 
 // Chunker
@@ -91,7 +92,11 @@ export type {
 export { EventBus } from "./events/EventBus.js";
 
 // Engine
-export { UploadEngine, makeUploadSession } from "./engine/UploadEngine.js";
+export {
+  UploadEngine,
+  makeUploadSession,
+  makeSessionId,
+} from "./engine/UploadEngine.js";
 export type { UploadEngineOptions } from "./engine/UploadEngine.js";
 
 // Transfer Manager
