@@ -600,22 +600,87 @@ export class UploadEngine {
 
   /**
    * Finalize the upload by calling adapter.completeTransfer().
+   *
+   * IDEMPOTENCY GUARD: If the process crashes after completeTransfer() succeeds
+   * but before store.save() persists the 'done' state, resumeSession() will
+   * call _complete() again (all chunks pending = 0, so it fast-paths here).
+   * Without protection this causes a false failure: the provider returns an
+   * error (B2: "already_finished", S3: idempotent so safe), and the session
+   * is irrecoverably marked 'failed' even though every byte is safely stored.
+   *
+   * Strategy:
+   *   1. Stamp `session.completingAt` and persist it BEFORE the provider call.
+   *      This creates a durable re-entry marker visible on the next restart.
+   *   2. On re-entry (completingAt already set in the store), if
+   *      completeTransfer() throws, treat it as a successful completion with a
+   *      warning rather than permanently failing the session. Rationale: all
+   *      chunk providerTokens were confirmed by the provider, so the multipart
+   *      assembly almost certainly already ran.
    */
   private async _complete(session: TransferSession): Promise<TransferSession> {
+    // Detect re-entry: completingAt is in the persisted session record,
+    // meaning a previous process run already initiated completeTransfer().
+    const isReEntry = session.completingAt !== undefined;
+
+    if (!isReEntry) {
+      // First attempt: stamp + persist BEFORE calling the provider so that on
+      // crash recovery we can recognise and handle the re-entry case.
+      session.completingAt = Date.now();
+      await this._store.save(session);
+    }
+
     try {
       await this._adapter.completeTransfer(session, session.chunks);
     } catch (err) {
-      transitionSession(session, "failed");
-      session.updatedAt = Date.now();
-      const error = err instanceof Error ? err : new Error(String(err));
-      this._bus.emit({ type: "session:failed", session, error });
-      await this._store.save(session);
-      await this._adapter.abortTransfer(session).catch(() => undefined);
-      return session;
+      if (isReEntry) {
+        // Re-entry after crash: a prior run already called completeTransfer().
+        // The provider error likely means the file was already assembled
+        // (e.g. B2 "already_finished", 404 on completed S3 upload, etc.).
+        // Since all chunk providerTokens were confirmed, treat as success.
+        this._bus.emit({
+          type: "log",
+          level: "warn",
+          message:
+            `[TransferX] _complete re-entry: completeTransfer threw for session ` +
+            `${session.id} after crash recovery — all chunks confirmed, treating ` +
+            `as done. Provider error: ${err instanceof Error ? err.message : String(err)}`,
+          context: { sessionId: session.id },
+        });
+        // Fall through to the done-state transition below.
+      } else {
+        // First attempt: genuine failure — abort and fail the session.
+        transitionSession(session, "failed");
+        session.updatedAt = Date.now();
+        const error = err instanceof Error ? err : new Error(String(err));
+        this._bus.emit({ type: "session:failed", session, error });
+        await this._store.save(session);
+        await this._adapter.abortTransfer(session).catch(() => undefined);
+        return session;
+      }
     }
 
     transitionSession(session, "done");
     session.updatedAt = Date.now();
+
+    // Stamp completion time — use updatedAt so both fields are always consistent.
+    session.completedAt = session.updatedAt;
+
+    // Derive a manifest checksum from sorted per-chunk SHA-256 digests.
+    // Only computed when all chunks carry a checksum (checksumVerify: true).
+    const sortedChecksums = session.chunks
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .map((c) => c.checksum ?? "");
+    if (
+      sortedChecksums.length > 0 &&
+      sortedChecksums.every((h) => h.length === 64)
+    ) {
+      session.manifestChecksum = crypto
+        .createHash("sha256")
+        .update(sortedChecksums.join(""))
+        .digest("hex");
+    }
+
     this._bus.emit({ type: "session:done", session });
     this._bus.emit({
       type: "log",

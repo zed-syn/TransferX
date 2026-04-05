@@ -140,6 +140,35 @@ export interface TransferSession {
 
   /** Number of times the full session has been retried after failure. */
   sessionRetries: number;
+
+  /**
+   * Epoch ms when `_complete()` was first invoked for this session.
+   * Set and persisted to the store BEFORE calling `adapter.completeTransfer()`
+   * as a crash-recovery idempotency marker — see `_complete()` in UploadEngine.
+   * Undefined until the first completion attempt begins.
+   */
+  completingAt?: number;
+
+  /**
+   * Epoch ms when the session transitioned to 'done'.
+   * Undefined until the upload completes successfully.
+   * Use this (not updatedAt) to compute upload duration.
+   */
+  completedAt?: number;
+
+  /**
+   * SHA-256 hex digest computed over the concatenated sorted per-chunk checksums.
+   * Formula: SHA256(chunk[0].checksum + chunk[1].checksum + … + chunk[N].checksum)
+   *
+   * This is NOT a raw SHA-256 of the file content — it is a deterministic
+   * integrity fingerprint that covers every uploaded part.  To verify end-to-end
+   * integrity, recompute this value locally and compare.
+   *
+   * Undefined when:
+   *   - checksumVerify was disabled (EngineConfig.checksumVerify = false), or
+   *   - the upload has not yet completed.
+   */
+  manifestChecksum?: string;
 }
 
 // ── State transition guard ───────────────────────────────────────────────────

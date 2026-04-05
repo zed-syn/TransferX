@@ -134,8 +134,98 @@ import { UploadEngine } from "@transferx/core";
 import { EventBus } from "@transferx/core";
 import { MemorySessionStore } from "@transferx/core";
 import { resolveEngineConfig } from "@transferx/core";
-import type { EngineConfig } from "@transferx/core";
+import type { EngineConfig, TransferSession } from "@transferx/core";
 import type { ISessionStore } from "@transferx/core";
+
+// ── Completion metadata ───────────────────────────────────────────────────────
+
+/**
+ * Structured payload emitted when a single upload session finishes successfully.
+ * Use this in your `onCompleted` callback to create EpisodeMedia or similar
+ * database records without parsing raw bus events.
+ *
+ * @example
+ * ```typescript
+ * const { upload } = createB2Engine({
+ *   b2: { ... },
+ *   store: new FileSessionStore('.sessions'),
+ *   onCompleted: async (meta) => {
+ *     await db.episodeMedia.create({
+ *       episodeId: myEpisodeId,
+ *       storageKey: meta.remoteKey,
+ *       fileSizeBytes: meta.fileSizeBytes,
+ *       durationMs: meta.durationMs,
+ *       manifestChecksum: meta.manifestChecksum,
+ *     });
+ *   },
+ * });
+ * ```
+ */
+export interface CompletedUploadMeta {
+  /** Session ID — stable across retries and restarts. */
+  sessionId: string;
+  /** Absolute local file path (Node.js). `undefined` in browser context. */
+  localPath: string | undefined;
+  /** Remote object key (path on the storage provider). */
+  remoteKey: string;
+  /** File size in bytes. */
+  fileSizeBytes: number;
+  /** MIME type of the uploaded file. */
+  mimeType: string;
+  /** Epoch ms when the session was created (first `upload()` call). */
+  createdAt: number;
+  /** Epoch ms when the upload fully completed and the provider confirmed. */
+  completedAt: number;
+  /** Upload wall-clock duration in milliseconds (completedAt − createdAt). */
+  durationMs: number;
+  /** Total number of parts (chunks) uploaded. */
+  chunkCount: number;
+  /**
+   * SHA-256 of concatenated sorted per-chunk checksums — deterministic
+   * integrity fingerprint of all uploaded parts.  `undefined` when
+   * `checksumVerify` is disabled in the engine config.
+   */
+  manifestChecksum: string | undefined;
+  /** The raw `TransferSession` — for advanced use or full DB persistence. */
+  session: TransferSession;
+}
+
+/** Build a CompletedUploadMeta from a finished TransferSession. */
+function _makeCompletedMeta(session: TransferSession): CompletedUploadMeta {
+  const completedAt = session.completedAt ?? session.updatedAt;
+  return {
+    sessionId: session.id,
+    localPath: session.file.path,
+    remoteKey: session.targetKey,
+    fileSizeBytes: session.file.size,
+    mimeType: session.file.mimeType,
+    createdAt: session.createdAt,
+    completedAt,
+    durationMs: completedAt - session.createdAt,
+    chunkCount: session.chunks.length,
+    manifestChecksum: session.manifestChecksum,
+    session,
+  };
+}
+
+/** Wire onCompleted to the bus, swallowing callback errors so they don't crash uploads. */
+function _wireOnCompleted(
+  bus: EventBus,
+  onCompleted: (meta: CompletedUploadMeta) => void | Promise<void>,
+): void {
+  bus.on("session:done", (event) => {
+    Promise.resolve(onCompleted(_makeCompletedMeta(event.session))).catch(
+      (err) => {
+        bus.emit({
+          type: "log",
+          level: "error",
+          message: `[TransferX] onCompleted callback threw for session ${event.session.id}: ${err instanceof Error ? err.message : String(err)}`,
+          context: { sessionId: event.session.id },
+        });
+      },
+    );
+  });
+}
 
 // ── Shared engine shape ───────────────────────────────────────────────────────
 
@@ -191,8 +281,9 @@ export interface CreateB2EngineOptions {
    */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory.
+   * Session store. Defaults to in-memory (state lost on restart).
    * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
+   * STRONGLY RECOMMENDED for production / large uploads.
    */
   store?: ISessionStore;
   /**
@@ -206,6 +297,19 @@ export interface CreateB2EngineOptions {
    * fileStatFn: (path) => stat(path)
    */
   fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+  /**
+   * Called once after each upload session completes successfully.
+   * Receives a structured metadata payload suitable for creating DB records
+   * (e.g. EpisodeMedia) without parsing raw bus events.
+   * Errors thrown inside this callback are caught and emitted as 'log' events
+   * — they will NOT fail or cancel the upload.
+   *
+   * @example
+   * onCompleted: async (meta) => {
+   *   await db.episodeMedia.create({ storageKey: meta.remoteKey, fileSizeBytes: meta.fileSizeBytes });
+   * }
+   */
+  onCompleted?: (meta: CompletedUploadMeta) => void | Promise<void>;
 }
 
 /** @deprecated Use {@link EngineHandle} — B2Engine is an alias kept for backwards compat. */
@@ -232,6 +336,8 @@ export function createB2Engine(opts: CreateB2EngineOptions): EngineHandle {
     ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
   });
 
+  if (opts.onCompleted) _wireOnCompleted(bus, opts.onCompleted);
+
   return {
     upload: engine.upload.bind(engine),
     resumeSession: engine.resumeSession.bind(engine),
@@ -253,7 +359,7 @@ export interface CreateS3EngineOptions {
   /** Partial engine config — missing fields use defaults. */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory.
+   * Session store. Defaults to in-memory (state lost on restart).
    * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
    */
   store?: ISessionStore;
@@ -262,6 +368,11 @@ export interface CreateS3EngineOptions {
    * @see {@link CreateB2EngineOptions.fileStatFn}
    */
   fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+  /**
+   * Called once after each upload session completes successfully.
+   * @see {@link CreateB2EngineOptions.onCompleted}
+   */
+  onCompleted?: (meta: CompletedUploadMeta) => void | Promise<void>;
 }
 
 /**
@@ -301,6 +412,8 @@ export function createS3Engine(opts: CreateS3EngineOptions): EngineHandle {
     ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
   });
 
+  if (opts.onCompleted) _wireOnCompleted(bus, opts.onCompleted);
+
   return {
     upload: engine.upload.bind(engine),
     resumeSession: engine.resumeSession.bind(engine),
@@ -322,7 +435,7 @@ export interface CreateR2EngineOptions {
   /** Partial engine config — missing fields use defaults. */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory.
+   * Session store. Defaults to in-memory (state lost on restart).
    * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
    */
   store?: ISessionStore;
@@ -331,6 +444,11 @@ export interface CreateR2EngineOptions {
    * @see {@link CreateB2EngineOptions.fileStatFn}
    */
   fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+  /**
+   * Called once after each upload session completes successfully.
+   * @see {@link CreateB2EngineOptions.onCompleted}
+   */
+  onCompleted?: (meta: CompletedUploadMeta) => void | Promise<void>;
 }
 
 /**
@@ -371,6 +489,8 @@ export function createR2Engine(opts: CreateR2EngineOptions): EngineHandle {
     ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
   });
 
+  if (opts.onCompleted) _wireOnCompleted(bus, opts.onCompleted);
+
   return {
     upload: engine.upload.bind(engine),
     resumeSession: engine.resumeSession.bind(engine),
@@ -404,7 +524,7 @@ export interface CreateHttpEngineOptions {
   /** Partial engine config — missing fields use defaults (10 MiB chunks, 4 concurrent, 5 retries). */
   config?: Partial<EngineConfig>;
   /**
-   * Session store. Defaults to in-memory.
+   * Session store. Defaults to in-memory (state lost on restart).
    * Use `FileSessionStore` from `@transferx/core` for crash-safe persistence.
    */
   store?: ISessionStore;
@@ -413,6 +533,11 @@ export interface CreateHttpEngineOptions {
    * @see {@link CreateB2EngineOptions.fileStatFn}
    */
   fileStatFn?: (path: string) => Promise<{ mtimeMs: number }>;
+  /**
+   * Called once after each upload session completes successfully.
+   * @see {@link CreateB2EngineOptions.onCompleted}
+   */
+  onCompleted?: (meta: CompletedUploadMeta) => void | Promise<void>;
 }
 
 /**
@@ -448,6 +573,8 @@ export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
     ...(opts.fileStatFn !== undefined ? { fileStatFn: opts.fileStatFn } : {}),
   });
 
+  if (opts.onCompleted) _wireOnCompleted(bus, opts.onCompleted);
+
   return {
     upload: engine.upload.bind(engine),
     resumeSession: engine.resumeSession.bind(engine),
@@ -459,6 +586,58 @@ export function createHttpEngine(opts: CreateHttpEngineOptions): EngineHandle {
     config,
     store,
   };
+}
+
+// ── Startup recovery helper ──────────────────────────────────────────────────
+
+/**
+ * Scan a session store and resume every non-terminal (non-done, non-cancelled)
+ * session via the provided engine.
+ *
+ * Call this **once at startup** to recover any in-progress uploads that were
+ * interrupted by a process crash or restart. Each resumed session runs
+ * concurrently in the background; outcomes are delivered via the engine's
+ * event bus (`session:done` / `session:failed`).
+ *
+ * For batch uploads with back-pressure, prefer wiring each session ID into a
+ * `TransferManager.enqueueResume()` call instead of using this helper directly.
+ *
+ * @example
+ * ```typescript
+ * import { createB2Engine, FileSessionStore, restoreAllSessions } from '@transferx/sdk';
+ *
+ * const store = new FileSessionStore('./.transferx-sessions');
+ * const engine = createB2Engine({
+ *   b2: { applicationKeyId: '...', applicationKey: '...', bucketId: '...' },
+ *   store,
+ *   onCompleted: async (meta) => { /* create DB record *\/ },
+ * });
+ *
+ * // On every startup:
+ * const { resuming, skipped } = await restoreAllSessions(store, engine);
+ * console.log(`Resuming ${resuming.length} session(s), skipped ${skipped.length} already-done.`);
+ * ```
+ */
+export async function restoreAllSessions(
+  store: ISessionStore,
+  engine: Pick<EngineHandle, "resumeSession">,
+): Promise<{ resuming: string[]; skipped: string[] }> {
+  const sessions = await store.listAll();
+  const resuming: string[] = [];
+  const skipped: string[] = [];
+
+  for (const session of sessions) {
+    if (session.state === "done" || session.state === "cancelled") {
+      skipped.push(session.id);
+      continue;
+    }
+    // Fire-and-forget: the engine runs the resume asynchronously.
+    // All outcomes (success / failure) surface via the bus event system.
+    engine.resumeSession(session.id).catch(() => undefined);
+    resuming.push(session.id);
+  }
+
+  return { resuming, skipped };
 }
 
 // ── HTTP Downloader factory ───────────────────────────────────────────────────
