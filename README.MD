@@ -30,14 +30,14 @@ Enterprise-grade chunked file transfer SDK for Node.js. Built for reliability �
 
 ## Packages
 
-| Package                   | Description                                                                                                                      |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Package                   | Description                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@transferx/sdk`          | **Start here.** High-level façade — `createB2Engine()`, `createS3Engine()`, `createR2Engine()`, `createHttpEngine()`, `createDownloader()` |
-| `@transferx/core`         | Engine, scheduler, retry, progress, stores, types                                                                                |
-| `@transferx/adapter-b2`   | Backblaze B2 Native API adapter                                                                                                  |
-| `@transferx/adapter-s3`   | AWS S3 and Cloudflare R2 multipart upload adapter                                                                                |
-| `@transferx/adapter-http` | Generic callback-based HTTP adapter — works with any custom multipart endpoint                                                   |
-| `@transferx/downloader`   | IDM-class parallel HTTP download engine with crash resume                                                                        |
+| `@transferx/core`         | Engine, scheduler, retry, progress, stores, types                                                                                          |
+| `@transferx/adapter-b2`   | Backblaze B2 Native API adapter                                                                                                            |
+| `@transferx/adapter-s3`   | AWS S3 and Cloudflare R2 multipart upload adapter                                                                                          |
+| `@transferx/adapter-http` | Generic callback-based HTTP adapter — works with any custom multipart endpoint                                                             |
+| `@transferx/downloader`   | IDM-class parallel HTTP download engine with crash resume                                                                                  |
 
 ---
 
@@ -65,10 +65,9 @@ const { upload, bus, config, store } = createB2Engine({
     applicationKey: process.env.B2_APP_KEY!,
     bucketId: process.env.B2_BUCKET_ID!,
   },
-  // Optional: persist sessions for crash-resume
   store: new FileSessionStore("./.transferx-sessions"),
   config: {
-    chunkSize: 10 * 1024 * 1024, // 10 MiB per chunk
+    chunkSizeBytes: 10 * 1024 * 1024, // 10 MiB per chunk
     concurrency: { initial: 4, min: 1, max: 16, adaptive: true },
   },
 });
@@ -85,10 +84,10 @@ bus.on("session:failed", ({ session, error }) =>
   console.error("\nFailed:", error.message),
 );
 
-// Build session and upload
+// Build session — makeSessionId() derives a stable crash-safe ID from path+key+size
 const stat = fs.statSync("/path/to/video.mp4");
 const session = makeUploadSession(
-  "upload-01",
+  makeSessionId("/path/to/video.mp4", "uploads/2024/video.mp4", stat.size),
   {
     name: "video.mp4",
     size: stat.size,
@@ -203,7 +202,7 @@ const result = await upload(session);
 
 | Field                | Type                | Default             | Description                                |
 | -------------------- | ------------------- | ------------------- | ------------------------------------------ |
-| `chunkSize`          | `number`            | `10485760` (10 MiB) | Bytes per chunk. Must be ≥ 5 MiB for B2/S3 |
+| `chunkSizeBytes`     | `number`            | `10485760` (10 MiB) | Bytes per chunk. Must be ≥ 5 MiB for B2/S3 |
 | `checksumVerify`     | `boolean`           | `true`              | Compute SHA-256 per chunk before upload    |
 | `progressIntervalMs` | `number`            | `200`               | How often progress events are emitted (ms) |
 | `retry`              | `RetryPolicy`       | see below           | Per-chunk retry configuration              |
@@ -220,12 +219,12 @@ const result = await upload(session);
 
 ### `ConcurrencyPolicy`
 
-| Field      | Default | Description                                                                                                      |
-| ---------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `initial`  | `4`     | Starting concurrency. When `adaptive` is false this is fixed for the entire upload.                              |
-| `min`      | `1`     | Floor — the scheduler will not scale below this value even under sustained high error rates.                     |
-| `max`      | `16`    | Ceiling — the scheduler will not scale above this value even under sustained low error rates.                    |
-| `adaptive` | `true`  | Enable adaptive concurrency. Tracks a 20-chunk sliding window; scales down if errorRate > 30%, up if < 5%.      |
+| Field      | Default | Description                                                                                                |
+| ---------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `initial`  | `4`     | Starting concurrency. When `adaptive` is false this is fixed for the entire upload.                        |
+| `min`      | `1`     | Floor — the scheduler will not scale below this value even under sustained high error rates.               |
+| `max`      | `16`    | Ceiling — the scheduler will not scale above this value even under sustained low error rates.              |
+| `adaptive` | `true`  | Enable adaptive concurrency. Tracks a 20-chunk sliding window; scales down if errorRate > 30%, up if < 5%. |
 
 ### `B2AdapterOptions` (via `createB2Engine({ b2: { … } })`)
 
@@ -239,11 +238,11 @@ const result = await upload(session);
 
 ### Factory options common to all three factories
 
-| Field        | Type                    | Default              | Description                                                                                                                                                            |
-| ------------ | ----------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config`     | `Partial<EngineConfig>` | defaults             | Override chunk size, retry policy, concurrency, etc.                                                                                                                   |
-| `store`      | `ISessionStore`         | `MemorySessionStore` | Session persistence store. Use `FileSessionStore` for durability.                                                                                                      |
-| `fileStatFn` | `function`              | `undefined`          | `(path) => Promise<{ mtimeMs }>`. Enables file-change detection on `resumeSession()`. Throws `fileChangedError` if the file is modified since the session was created. |
+| Field        | Type                    | Default      | Description                                                                                                                                                            |
+| ------------ | ----------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config`     | `Partial<EngineConfig>` | defaults     | Override chunk size, retry policy, concurrency, etc.                                                                                                                   |
+| `store`      | `ISessionStore`         | **required** | Session persistence store. Use `FileSessionStore` for crash-safe durability. `MemorySessionStore` is accepted for testing only — sessions are lost on process exit.    |
+| `fileStatFn` | `function`              | `undefined`  | `(path) => Promise<{ mtimeMs }>`. Enables file-change detection on `resumeSession()`. Throws `fileChangedError` if the file is modified since the session was created. |
 
 ---
 
@@ -303,17 +302,18 @@ continues from where it left off.
 
 ## Error Taxonomy
 
-| Category      | Retryable | Cause                             |
-| ------------- | --------- | --------------------------------- |
-| `network`     | ✅        | Connection reset, timeout         |
-| `rateLimit`   | ✅        | HTTP 429 — respects `Retry-After` |
-| `serverError` | ✅        | HTTP 5xx                          |
-| `checksum`    | ✅        | Local integrity check failed      |
-| `unknown`     | ✅        | Conservative — retried by default |
-| `clientError` | ❌        | HTTP 4xx (except 429) — our bug   |
-| `auth`        | ❌        | 401/403 — needs token refresh     |
-| `cancelled`   | ❌        | User-initiated                    |
-| `fatal`       | ❌        | Unrecoverable state               |
+| Category          | Retryable | Cause                                                                           |
+| ----------------- | --------- | ------------------------------------------------------------------------------- |
+| `network`         | ✅        | Connection reset, timeout                                                       |
+| `rateLimit`       | ✅        | HTTP 429 — respects `Retry-After`                                               |
+| `serverError`     | ✅        | HTTP 5xx                                                                        |
+| `checksum`        | ✅        | Local integrity check failed                                                    |
+| `unknown`         | ✅        | Conservative — retried by default                                               |
+| `clientError`     | ❌        | HTTP 4xx (except 429) — our bug                                                 |
+| `auth`            | ❌        | 401/403 — needs token refresh                                                   |
+| `cancelled`       | ❌        | User-initiated                                                                  |
+| `duplicateUpload` | ❌        | Upload already active for the same `targetKey` — call `resumeSession()` instead |
+| `fatal`           | ❌        | Unrecoverable state                                                             |
 
 ---
 
@@ -415,30 +415,34 @@ TransferX is designed so that a process crash at any point leaves the session in
 a recoverable state. On restart:
 
 ```typescript
-import { createB2Engine, FileSessionStore } from "@transferx/sdk";
+import {
+  createB2Engine,
+  FileSessionStore,
+  restoreAllSessions,
+} from "@transferx/sdk";
 
 const store = new FileSessionStore("./.transferx-sessions");
-const { resumeSession, bus } = createB2Engine({
+const engine = createB2Engine({
   b2: {
     /* ... */
   },
   store,
+  onCompleted: async (meta) => {
+    console.log(`Completed: ${meta.remoteKey} in ${meta.durationMs}ms`);
+  },
 });
 
-bus.on("session:reconciling", ({ session }) =>
+engine.bus.on("session:reconciling", ({ session }) =>
   console.log(`Reconciling ${session.id} with provider…`),
 );
-bus.on("session:done", ({ session }) =>
-  console.log(`Resumed and completed: ${session.id}`),
-);
 
-// Resume all sessions that were interrupted
-const sessions = await store.listAll();
-for (const s of sessions) {
-  if (s.state === "failed" || s.state === "paused" || s.state === "running") {
-    await resumeSession(s.id);
-  }
-}
+// Resume all sessions interrupted by a crash — throttled to 4 concurrent
+const { resuming, skipped } = await restoreAllSessions(store, engine, {
+  maxConcurrent: 4,
+});
+console.log(
+  `Resuming ${resuming.length} session(s), ${skipped.length} already done.`,
+);
 ```
 
 `resumeSession()` will:
@@ -475,6 +479,73 @@ const result = await uploadPromise; // result.state === 'cancelled'
 // Resume after crash or explicit pause
 await resumeSession(session.id);
 ```
+
+---
+
+## makeSessionId()
+
+Generate a deterministic, crash-safe session ID from the upload's inputs:
+
+```typescript
+import { makeSessionId } from "@transferx/sdk";
+
+const id = makeSessionId(filePath, targetKey, fileSizeBytes);
+// e.g. "a3f2c8e1b0d94f2a67c1" — stable 24-hex SHA-256-based ID
+```
+
+`makeSessionId(filePath, targetKey, fileSizeBytes)` hashes `filePath + "|" + targetKey + "|" + fileSizeBytes` with SHA-256, then returns the first 24 hex characters. The same inputs always yield the same ID, which means:
+
+- If a session is saved to the store, a restart with the same file will resolve to the same session ID and `resumeSession()` can pick it up automatically.
+- If you accidentally call `upload()` twice with the same arguments, the engine detects the duplicate session and throws `duplicateUploadError` — preventing a double-charge or split file on your storage provider.
+
+---
+
+## onCompleted Callback & CompletedUploadMeta
+
+Rather than parsing raw bus events, supply `onCompleted` to the factory to receive a clean structured payload after every successful upload:
+
+```typescript
+const engine = createB2Engine({
+  b2: {
+    /* ... */
+  },
+  store: new FileSessionStore(".sessions"),
+  onCompleted: async (meta) => {
+    // Called once per completed session — errors are caught and emitted as 'log' events
+    await db.media.create({
+      storageKey: meta.remoteKey,
+      fileSizeBytes: meta.fileSizeBytes,
+      mimeType: meta.mimeType,
+      durationMs: meta.durationMs,
+      manifestChecksum: meta.manifestChecksum,
+    });
+  },
+});
+```
+
+### `CompletedUploadMeta` shape
+
+| Field              | Type                  | Description                                                                    |
+| ------------------ | --------------------- | ------------------------------------------------------------------------------ |
+| `sessionId`        | `string`              | Stable session ID                                                              |
+| `localPath`        | `string \| undefined` | Absolute local file path (`undefined` in browser context)                      |
+| `remoteKey`        | `string`              | Object key on the storage provider                                             |
+| `fileSizeBytes`    | `number`              | File size in bytes                                                             |
+| `mimeType`         | `string`              | MIME type                                                                      |
+| `createdAt`        | `number`              | Epoch ms when the session was first created                                    |
+| `completedAt`      | `number`              | Epoch ms when the provider confirmed all parts                                 |
+| `durationMs`       | `number`              | `completedAt − createdAt` in milliseconds                                      |
+| `chunkCount`       | `number`              | Total parts uploaded                                                           |
+| `manifestChecksum` | `string \| undefined` | SHA-256 of sorted per-chunk checksums (`undefined` if `checksumVerify` is off) |
+| `session`          | `TransferSession`     | Full session for advanced use                                                  |
+
+### Session completion fields on `TransferSession`
+
+| Field              | Type                  | Description                                                |
+| ------------------ | --------------------- | ---------------------------------------------------------- |
+| `completingAt`     | `number \| undefined` | Stamped before `completeTransfer()` — crash re-entry guard |
+| `completedAt`      | `number \| undefined` | Stamped after provider confirmation                        |
+| `manifestChecksum` | `string \| undefined` | Aggregated checksum of all chunk SHA-256s                  |
 
 ---
 
