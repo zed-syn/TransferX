@@ -67,7 +67,7 @@ const { upload, bus, config, store } = createB2Engine({
   },
   store: new FileSessionStore("./.transferx-sessions"),
   config: {
-    chunkSizeBytes: 10 * 1024 * 1024, // 10 MiB per chunk
+    chunkSize: 10 * 1024 * 1024, // 10 MiB per chunk
     concurrency: { initial: 4, min: 1, max: 16, adaptive: true },
   },
 });
@@ -100,7 +100,11 @@ const session = makeUploadSession(
 
 await store.save(session);
 const result = await upload(session);
-// result.state === 'done'
+if (result.state !== "done") {
+  throw new Error(
+    `Upload ended in state "${result.state}" — check session:failed event for details`,
+  );
+}
 ```
 
 ### 3. Upload to AWS S3
@@ -149,7 +153,9 @@ const session = makeUploadSession(
 
 await store.save(session);
 const result = await upload(session);
-// result.state === 'done'
+if (result.state !== "done") {
+  throw new Error(`Upload ended in state "${result.state}"`);
+}
 ```
 
 ### 4. Upload to Cloudflare R2
@@ -189,7 +195,9 @@ const session = makeUploadSession(
 
 await store.save(session);
 const result = await upload(session);
-// result.state === 'done'
+if (result.state !== "done") {
+  throw new Error(`Upload ended in state "${result.state}"`);
+}
 ```
 
 > `createR2Engine()` automatically sets `endpoint`, `region: "auto"`, and `forcePathStyle: true` — no extra config needed.
@@ -202,7 +210,7 @@ const result = await upload(session);
 
 | Field                | Type                | Default             | Description                                |
 | -------------------- | ------------------- | ------------------- | ------------------------------------------ |
-| `chunkSizeBytes`     | `number`            | `10485760` (10 MiB) | Bytes per chunk. Must be ≥ 5 MiB for B2/S3 |
+| `chunkSize`          | `number`            | `10485760` (10 MiB) | Bytes per chunk. Must be ≥ 5 MiB for B2/S3 |
 | `checksumVerify`     | `boolean`           | `true`              | Compute SHA-256 per chunk before upload    |
 | `progressIntervalMs` | `number`            | `200`               | How often progress events are emitted (ms) |
 | `retry`              | `RetryPolicy`       | see below           | Per-chunk retry configuration              |
@@ -238,11 +246,11 @@ const result = await upload(session);
 
 ### Factory options common to all three factories
 
-| Field        | Type                    | Default      | Description                                                                                                                                                            |
-| ------------ | ----------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config`     | `Partial<EngineConfig>` | defaults     | Override chunk size, retry policy, concurrency, etc.                                                                                                                   |
-| `store`      | `ISessionStore`         | **required** | Session persistence store. Use `FileSessionStore` for crash-safe durability. `MemorySessionStore` is accepted for testing only — sessions are lost on process exit.    |
-| `fileStatFn` | `function`              | `undefined`  | `(path) => Promise<{ mtimeMs }>`. Enables file-change detection on `resumeSession()`. Throws `fileChangedError` if the file is modified since the session was created. |
+| Field        | Type                    | Default      | Description                                                                                                                                                                                                                                                                                                       |
+| ------------ | ----------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config`     | `Partial<EngineConfig>` | defaults     | Override chunk size, retry policy, concurrency, etc.                                                                                                                                                                                                                                                              |
+| `store`      | `ISessionStore`         | **required** | Session persistence store. Use `FileSessionStore` for crash-safe durability across process restarts. `MemorySessionStore` is a valid production choice for Node.js workers that don't need crash recovery between chunks — it is concurrent-safe and avoids file I/O overhead. Sessions are lost on process exit. |
+| `fileStatFn` | `function`              | `undefined`  | `(path) => Promise<{ mtimeMs }>`. Enables file-change detection on `resumeSession()`. Throws `fileChangedError` if the file is modified since the session was created.                                                                                                                                            |
 
 ---
 

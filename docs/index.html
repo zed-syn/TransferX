@@ -923,7 +923,8 @@ npm install @transferx/sdk @transferx/adapter-s3</code></pre>
 
 <span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
 <span class="kw">const</span> <span class="pr">result</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
-<span class="cm">// result.state === 'done'</span></code></pre>
+<span class="cm">// Always check result.state — 'done' | 'failed' | 'cancelled'</span>
+<span class="kw">if</span> <span class="pn">(</span><span class="pr">result</span><span class="pn">.</span><span class="pr">state</span> <span class="op">!==</span> <span class="str">'done'</span><span class="pn">)</span> <span class="kw">throw</span> <span class="kw">new</span> <span class="ty">Error</span><span class="pn">(</span><span class="str">'Upload failed: '</span> <span class="op">+</span> <span class="pr">result</span><span class="pn">.</span><span class="pr">state</span><span class="pn">);</span></code></pre>
       </section>
 
       <!-- ── Sessions ── -->
@@ -1486,7 +1487,7 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
           </thead>
           <tbody>
             <tr>
-              <td><code>chunkSizeBytes</code></td>
+              <td><code>chunkSize</code></td>
               <td><code>number</code></td>
               <td><code>10485760</code></td>
               <td>10 MiB. Bytes per chunk.</td>
@@ -1792,7 +1793,8 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
 
 <span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
 <span class="kw">const</span> <span class="pr">result</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
-<span class="cm">// result.state === 'done'</span></code></pre>
+<span class="cm">// Always check result.state — 'done' | 'failed' | 'cancelled'</span>
+<span class="kw">if</span> <span class="pn">(</span><span class="pr">result</span><span class="pn">.</span><span class="pr">state</span> <span class="op">!==</span> <span class="str">'done'</span><span class="pn">)</span> <span class="kw">throw</span> <span class="kw">new</span> <span class="ty">Error</span><span class="pn">(</span><span class="str">'Upload failed: '</span> <span class="op">+</span> <span class="pr">result</span><span class="pn">.</span><span class="pr">state</span><span class="pn">);</span></code></pre>
 
         <h3>Notes</h3>
         <ul>
@@ -1919,7 +1921,8 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
 
 <span class="kw">await</span> <span class="pr">store</span><span class="pn">.</span><span class="fn">save</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
 <span class="kw">const</span> <span class="pr">result</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">upload</span><span class="pn">(</span><span class="pr">session</span><span class="pn">);</span>
-<span class="cm">// result.state === 'done'</span></code></pre>
+<span class="cm">// Always check result.state — 'done' | 'failed' | 'cancelled'</span>
+<span class="kw">if</span> <span class="pn">(</span><span class="pr">result</span><span class="pn">.</span><span class="pr">state</span> <span class="op">!==</span> <span class="str">'done'</span><span class="pn">)</span> <span class="kw">throw</span> <span class="kw">new</span> <span class="ty">Error</span><span class="pn">(</span><span class="str">'Upload failed: '</span> <span class="op">+</span> <span class="pr">result</span><span class="pn">.</span><span class="pr">state</span><span class="pn">);</span></code></pre>
 
         <h3>Notes</h3>
         <ul>
@@ -2390,7 +2393,7 @@ actual_delay = base_delay + random(0, jitterMs)</code></pre>
         <pre><code>const engine = new DownloadEngine({
   config: {
     concurrency:       4,          // parallel connections     (default: 8)
-    chunkSizeBytes:    8 &lt;&lt; 20,   // 8 MiB chunk size         (default: 4 MiB)
+    chunkSize:         8 &lt;&lt; 20,   // 8 MiB chunk size         (default: 4 MiB)
     progressIntervalMs: 500,       // progress event throttle  (default: 250 ms)
     headers: { Authorization: "Bearer &lt;token&gt;" },
     retry: {

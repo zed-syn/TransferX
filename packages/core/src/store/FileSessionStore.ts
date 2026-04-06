@@ -21,7 +21,9 @@
  *   (treated as "session not found") and log a warning.  The corrupt file is
  *   NOT deleted automatically — operators can inspect it.
  *
- * Concurrency safety: inherited from the engine (no concurrent saves per session).
+ * Concurrency safety: saves for the same session ID are serialised via a
+ * per-session promise chain (_writeQueue) so that concurrent chunk callbacks
+ * never race on the same .tmp file.
  */
 
 import fs from "node:fs/promises";
@@ -31,12 +33,29 @@ import type { ISessionStore } from "./ISessionStore.js";
 
 export class FileSessionStore implements ISessionStore {
   private readonly _dir: string;
+  private readonly _writeQueue = new Map<string, Promise<void>>();
 
   constructor(storeDir: string) {
     this._dir = storeDir;
   }
 
   async save(session: TransferSession): Promise<void> {
+    // Chain writes per session — prevents concurrent tasks from racing on the
+    // same <id>.json.tmp staging file when concurrency > 1.
+    const prev = this._writeQueue.get(session.id) ?? Promise.resolve();
+    const next = prev.then(() => this._doSave(session));
+    // Store a settled version so a failed save doesn't permanently block the queue.
+    this._writeQueue.set(
+      session.id,
+      next.then(
+        () => {},
+        () => {},
+      ),
+    );
+    return next;
+  }
+
+  private async _doSave(session: TransferSession): Promise<void> {
     await this._ensureDir();
     const live = this._livePath(session.id);
     const tmp = `${live}.tmp`;
@@ -65,6 +84,7 @@ export class FileSessionStore implements ISessionStore {
   }
 
   async delete(sessionId: string): Promise<void> {
+    this._writeQueue.delete(sessionId);
     const live = this._livePath(sessionId);
     try {
       await fs.unlink(live);

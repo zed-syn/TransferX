@@ -275,7 +275,7 @@ createB2Engine({
   b2:    { ... },
   store: new FileSessionStore('./.sessions'),
   config: {
-    chunkSizeBytes: 10 * 1024 * 1024,  // 10 MiB (default)
+    chunkSize: 10 * 1024 * 1024,  // 10 MiB (default)
     concurrency: {
       initial:  4,
       min:      1,

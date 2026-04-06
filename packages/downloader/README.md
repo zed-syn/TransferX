@@ -9,21 +9,21 @@ for servers that do not support `Range` requests.
 
 ## Features
 
-| Feature              | Details                                                                                             |
-| -------------------- | --------------------------------------------------------------------------------------------------- |
-| Parallel connections | Up to 8 simultaneous range requests (configurable)                                                  |
-| Byte-level resume    | JSON session persisted to disk; resumes from sub-chunk 1 MiB boundary — not just the chunk start    |
-| Retry                | Per-chunk exponential back-off with full jitter; non-retryable errors (4xx) throw immediately       |
-| Progress             | EMA-smoothed `bytesPerSec`, `percent`, `eta`, throttled to 250 ms intervals                         |
+| Feature              | Details                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Parallel connections | Up to 8 simultaneous range requests (configurable)                                                         |
+| Byte-level resume    | JSON session persisted to disk; resumes from sub-chunk 1 MiB boundary — not just the chunk start           |
+| Retry                | Per-chunk exponential back-off with full jitter; non-retryable errors (4xx) throw immediately              |
+| Progress             | EMA-smoothed `bytesPerSec`, `percent`, `eta`, throttled to 250 ms intervals                                |
 | Adaptive concurrency | Throughput hill-climbing (≥5 % improvement gate) + error-rate controller; scales `min`↔`max` automatically |
-| Disk pre-allocation  | `ftruncate()` reserves the full file extent immediately after open                                  |
-| Periodic fdatasync   | `syncOnChunkComplete(N)` flushes kernel write-back every N chunks; bounds power-loss data loss      |
-| Write coalescing     | `BufferPool` accumulates small stream frames into 256 KiB writes; reduces GC pressure and syscalls  |
-| DownloadManager      | FIFO queue with `maxConcurrentDownloads` cap; prevents resource exhaustion                          |
-| DownloadMetrics      | Passive event-driven per-task metrics: bytes, chunk latency, retry count, error rate, peak speed    |
-| Server fallback      | If the server returns `200` instead of `206`, falls back to a single-stream download                |
-| Stale detection      | Detects stale sessions via ETag → Last-Modified → file-size comparison before resuming              |
-| No native deps       | Pure Node.js; only `node:fs`, `node:crypto`, `node:path`                                            |
+| Disk pre-allocation  | `ftruncate()` reserves the full file extent immediately after open                                         |
+| Periodic fdatasync   | `syncOnChunkComplete(N)` flushes kernel write-back every N chunks; bounds power-loss data loss             |
+| Write coalescing     | `BufferPool` accumulates small stream frames into 256 KiB writes; reduces GC pressure and syscalls         |
+| DownloadManager      | FIFO queue with `maxConcurrentDownloads` cap; prevents resource exhaustion                                 |
+| DownloadMetrics      | Passive event-driven per-task metrics: bytes, chunk latency, retry count, error rate, peak speed           |
+| Server fallback      | If the server returns `200` instead of `206`, falls back to a single-stream download                       |
+| Stale detection      | Detects stale sessions via ETag → Last-Modified → file-size comparison before resuming                     |
+| No native deps       | Pure Node.js; only `node:fs`, `node:crypto`, `node:path`                                                   |
 
 ---
 
@@ -140,16 +140,16 @@ down makes any overlap idempotent via pwrite semantics.
 ```typescript
 const engine = new DownloadEngine({
   config: {
-    concurrency: 4,            // parallel connections (default: 8)
-    chunkSizeBytes: 8 << 20,   // 8 MiB chunk size (default: 4 MiB)
-    fsyncIntervalChunks: 8,    // fdatasync every N chunks (default: 8; 0 = off)
+    concurrency: 4, // parallel connections (default: 8)
+    chunkSize: 8 << 20, // 8 MiB chunk size (default: 4 MiB)
+    fsyncIntervalChunks: 8, // fdatasync every N chunks (default: 8; 0 = off)
     retry: {
-      maxAttempts: 5,          // max retry attempts per chunk (default: 5)
-      baseDelayMs: 500,        // initial backoff base (default: 500 ms)
-      maxDelayMs: 30_000,      // backoff ceiling (default: 30 s)
-      jitterMs: 200,           // random jitter added to each delay (default: 200 ms)
+      maxAttempts: 5, // max retry attempts per chunk (default: 5)
+      baseDelayMs: 500, // initial backoff base (default: 500 ms)
+      maxDelayMs: 30_000, // backoff ceiling (default: 30 s)
+      jitterMs: 200, // random jitter added to each delay (default: 200 ms)
     },
-    progressIntervalMs: 500,   // progress event throttle (default: 250 ms)
+    progressIntervalMs: 500, // progress event throttle (default: 250 ms)
     headers: {
       // extra headers sent on every request
       Authorization: "Bearer <token>",
@@ -161,16 +161,16 @@ const engine = new DownloadEngine({
 
 ### `DownloadConfig` fields
 
-| Field                  | Type     | Default   | Description                                                                              |
-| ---------------------- | -------- | --------- | ---------------------------------------------------------------------------------------- |
-| `concurrency`          | `number` | `8`       | Max parallel range connections                                                           |
-| `chunkSizeBytes`       | `number` | `4194304` | Bytes per chunk (4 MiB)                                                                  |
-| `fsyncIntervalChunks`  | `number` | `8`       | Call `fdatasync` every N chunks. `0` disables. Bounds power-loss data loss to N×chunkSize |
-| `progressIntervalMs`   | `number` | `250`     | Minimum ms between `progress` events                                                     |
-| `retry.maxAttempts`    | `number` | `5`       | Max attempts per chunk including first                                                   |
-| `retry.baseDelayMs`    | `number` | `500`     | Exponential backoff base                                                                 |
-| `retry.maxDelayMs`     | `number` | `30000`   | Backoff ceiling                                                                          |
-| `retry.jitterMs`       | `number` | `200`     | Max random jitter per delay                                                              |
+| Field                 | Type     | Default   | Description                                                                               |
+| --------------------- | -------- | --------- | ----------------------------------------------------------------------------------------- |
+| `concurrency`         | `number` | `8`       | Max parallel range connections                                                            |
+| `chunkSize`           | `number` | `4194304` | Bytes per chunk (4 MiB)                                                                   |
+| `fsyncIntervalChunks` | `number` | `8`       | Call `fdatasync` every N chunks. `0` disables. Bounds power-loss data loss to N×chunkSize |
+| `progressIntervalMs`  | `number` | `250`     | Minimum ms between `progress` events                                                      |
+| `retry.maxAttempts`   | `number` | `5`       | Max attempts per chunk including first                                                    |
+| `retry.baseDelayMs`   | `number` | `500`     | Exponential backoff base                                                                  |
+| `retry.maxDelayMs`    | `number` | `30000`   | Backoff ceiling                                                                           |
+| `retry.jitterMs`      | `number` | `200`     | Max random jitter per delay                                                               |
 
 ---
 
@@ -206,7 +206,11 @@ console.log(manager.getStatus()); // { active: 0, queued: 0 }
 Attach `DownloadMetrics` to one or more tasks for aggregated observability:
 
 ```typescript
-import { DownloadEngine, DownloadTask, DownloadMetrics } from "@transferx/downloader";
+import {
+  DownloadEngine,
+  DownloadTask,
+  DownloadMetrics,
+} from "@transferx/downloader";
 
 const engine = new DownloadEngine();
 const metrics = new DownloadMetrics();
@@ -219,10 +223,14 @@ await task.start();
 
 const snap = metrics.getSnapshot(raw.id)!;
 console.log(`Downloaded : ${snap.bytesDownloaded} bytes`);
-console.log(`Chunks     : ${snap.chunksCompleted} completed, ${snap.chunksFailed} failed`);
+console.log(
+  `Chunks     : ${snap.chunksCompleted} completed, ${snap.chunksFailed} failed`,
+);
 console.log(`Retries    : ${snap.retryCount}`);
 console.log(`Avg latency: ${snap.avgChunkLatencyMs.toFixed(0)} ms/chunk`);
-console.log(`Peak speed : ${(snap.peakSpeedBytesPerSec / 1e6).toFixed(2)} MB/s`);
+console.log(
+  `Peak speed : ${(snap.peakSpeedBytesPerSec / 1e6).toFixed(2)} MB/s`,
+);
 
 // Aggregate across multiple tasks
 const agg = metrics.getAggregate();
