@@ -1,3 +1,10 @@
+cd C:\Users\PC\Documents\Tool-Script\UploadX\packages\core ; npm publish --access public
+cd ..\adapters\b2 ; npm publish --access public
+cd ..\s3 ; npm publish --access public
+cd ..\http ; npm publish --access public
+cd ..\..\downloader ; npm publish --access public
+cd ..\sdk ; npm publish --access public
+
 npm version patch
 
 npm login
