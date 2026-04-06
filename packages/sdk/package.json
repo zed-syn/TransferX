@@ -1,6 +1,6 @@
 {
   "name": "@transferx/sdk",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "description": "TransferX public SDK — high-level entry point for production uploads",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,10 +14,10 @@
     "README.md"
   ],
   "dependencies": {
-    "@transferx/adapter-b2": "1.1.4",
-    "@transferx/adapter-http": "1.1.4",
-    "@transferx/adapter-s3": "1.1.4",
-    "@transferx/core": "1.1.5",
-    "@transferx/downloader": "1.3.3"
+    "@transferx/adapter-b2": "1.1.5",
+    "@transferx/adapter-http": "1.1.5",
+    "@transferx/adapter-s3": "1.1.5",
+    "@transferx/core": "1.1.6",
+    "@transferx/downloader": "1.3.4"
   }
 }
